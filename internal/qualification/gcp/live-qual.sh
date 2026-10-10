@@ -959,14 +959,11 @@ app_load_runtime_secrets() {
     return 1
   fi
   export POSTGRES_URL="$url"
-  export SOL_API_KEY="${SOL_API_KEY:-$(head -c 24 /dev/urandom | base64 | tr -d '/+=' | head -c 20)}"
   {
     printf 'POSTGRES_URL: %s\n' "$(app_redact_url "$url")"
-    printf 'SOL_API_KEY: %s (redacted; generated for this run, the value the operator would \
-      place in their secret store)\n' "$(printf '%s' "$SOL_API_KEY" | cut -c1-2)***"
   } >"$LOG_DIR/app-runtime-secrets.txt" 2>&1
   say "the workspace's declared runtime secrets are established from the platform's own output"
-  say "  (POSTGRES_URL) and generated for this run (SOL_API_KEY): $LOG_DIR/app-runtime-secrets.txt"
+  say "  (POSTGRES_URL): $LOG_DIR/app-runtime-secrets.txt"
 }
 
 app_secret_failure() {
@@ -1026,16 +1023,14 @@ app_supply_secrets() {
   fi
   export SOL_SECRET_VALUE="$POSTGRES_URL"
   app_secret_set POSTGRES_URL || return 1
-  export SOL_SECRET_VALUE="$SOL_API_KEY"
-  app_secret_set SOL_API_KEY || return 1
   export SOL_SECRET_VALUE="$password"
   app_secret_set KAFKA_SASL_PASSWORD || return 1
   export SOL_SECRET_VALUE="$ca"
   app_secret_set KAFKA_SSL_CA_CERT || return 1
   unset SOL_SECRET_VALUE
   {
-    printf 'runtime_secret_keys: POSTGRES_URL SOL_API_KEY KAFKA_SASL_PASSWORD KAFKA_SSL_CA_CERT\n'
-    printf 'runtime_secret_sources: the cluster postgres_url output; this run; redpanda/redpanda-users; redpanda/redpanda-default-cert\n'
+    printf 'runtime_secret_keys: POSTGRES_URL KAFKA_SASL_PASSWORD KAFKA_SSL_CA_CERT\n'
+    printf 'runtime_secret_sources: the cluster postgres_url output; redpanda/redpanda-users; redpanda/redpanda-default-cert\n'
     printf 'runtime_secret_values: never recorded\n'
   } >>"$LOG_DIR/prerequisites.txt"
   say "app: supplied the operator's runtime and workload secrets through sol secret set; their values are never recorded"
@@ -1506,10 +1501,10 @@ phases
             The deploy identity has no registry-write authority (ADR 0002, SEC-011), and Sol
             refuses to run either step without a digest-pinned runner. The deploy is still
             given the target's registry for the
-            workspace's own images. The workspace's declared runtime secrets
-            (POSTGRES_URL, SOL_API_KEY) come from the operator's side of the contract -- the
-            cluster root's postgres_url output plus a value for the API key -- and the
-            bundle records them redacted, never in the clear.
+            workspace's own images. The workspace's declared runtime secret
+            (POSTGRES_URL) comes from the operator's side of the contract -- the
+            cluster root's postgres_url output -- and the
+            bundle records it redacted, never in the clear.
             The target it writes selects no profile: this row qualifies the application path,
             and claims nothing the production profile's guarantees would promise.
   identity  capture the managed-secret and projected-token mechanism facts the VERIF-021 and

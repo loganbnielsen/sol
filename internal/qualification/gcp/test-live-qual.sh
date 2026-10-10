@@ -818,8 +818,6 @@ lacks "no mutable tag is passed to a profile that requires immutable artifacts" 
   "--image-tag" "$TMP/app-ok.argv"
 has "the runtime secret is supplied through sol secret set" \
   "secret set POSTGRES_URL --target qual/gcp/us-central1 --domain payments" "$TMP/app-ok.argv"
-has "the workload API key too" \
-  "secret set SOL_API_KEY --target qual/gcp/us-central1 --domain demo_ts" "$TMP/app-ok.argv"
 has "and the Kafka credential and CA" \
   "secret set KAFKA_SSL_CA_CERT --target qual/gcp/us-central1 --domain comms" "$TMP/app-ok.argv"
 lacks "no secret value is passed on a command line" \
@@ -860,7 +858,7 @@ present "$TMP/app-ok.logs/app-runtime-secrets.txt" "the operator's runtime secre
 has "the database URL is redacted, because the bundle must never carry the password" "://***@" \
   "$TMP/app-ok.logs/app-runtime-secrets.txt"
 lacks "and never in the clear" "qual-secret" "$TMP/app-ok.logs/app-runtime-secrets.txt"
-has "the API key the app's contract requires is accounted for" "SOL_API_KEY:" \
+lacks "only a unit that protects /metrics declares the API key, so it is not a workspace runtime secret" "SOL_API_KEY:" \
   "$TMP/app-ok.logs/app-runtime-secrets.txt"
 
 printf '\nscenario: a stalled orders read-back fails the phase, so success cannot be manufactured\n'

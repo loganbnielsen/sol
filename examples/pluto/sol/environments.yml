@@ -37,37 +37,23 @@ prod:
         checkout/checkout_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         payments/charge_svc:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
         payments/orders_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         comms/notify_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
         comms/fulfilment_worker:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/order_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/fulfillment_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
 
 # Selects the production-single-region profile explicitly.
@@ -96,16 +82,12 @@ pilot:
         payments/charge_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
           KAFKA_SASL_PASSWORD:
             authority: sol
           KAFKA_SSL_CA_CERT:
             authority: sol
         payments/orders_svc:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
           KAFKA_SASL_PASSWORD:
             authority: sol
@@ -114,16 +96,12 @@ pilot:
         comms/notify_worker:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
           KAFKA_SASL_PASSWORD:
             authority: sol
           KAFKA_SSL_CA_CERT:
             authority: sol
         comms/fulfilment_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
           KAFKA_SASL_PASSWORD:
             authority: sol
@@ -132,8 +110,6 @@ pilot:
         checkout/checkout_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
           KAFKA_SASL_PASSWORD:
             authority: sol
           KAFKA_SSL_CA_CERT:
@@ -141,16 +117,12 @@ pilot:
         demo_ts/order_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
           KAFKA_SASL_PASSWORD:
             authority: sol
           KAFKA_SSL_CA_CERT:
             authority: sol
         demo_ts/fulfillment_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
           KAFKA_SASL_PASSWORD:
             authority: sol
@@ -187,17 +159,11 @@ dev:
         checkout/checkout_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/order_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/fulfillment_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
 
 # The customer-cloud environment the tutorial deploys to (docs/guides/TUTORIAL.md,
@@ -215,37 +181,23 @@ customer_cloud:
         checkout/checkout_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         payments/charge_svc:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
         payments/orders_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         comms/notify_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
         comms/fulfilment_worker:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/order_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/fulfillment_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
     # BYO targets use an existing cluster; cloud lifecycle commands refuse them.
     byo/onprem:
@@ -255,35 +207,21 @@ customer_cloud:
         checkout/checkout_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         payments/charge_svc:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
         payments/orders_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         comms/notify_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
         comms/fulfilment_worker:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/order_svc:
           POSTGRES_URL:
             authority: sol
-          SOL_API_KEY:
-            authority: sol
         demo_ts/fulfillment_worker:
           POSTGRES_URL:
-            authority: sol
-          SOL_API_KEY:
             authority: sol
