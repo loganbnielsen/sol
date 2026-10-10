@@ -96,9 +96,8 @@ let metadata_with_labels ~labels ~ns ~name =
 
 let app_selector name = Y.map [ "app", Y.string name ]
 
-let resource ?comments ~api_version ~kind fields =
+let resource ~api_version ~kind fields =
   Y.document
-    ?comments
     (Y.map (("apiVersion", Y.string api_version) :: ("kind", Y.string kind) :: fields))
 ;;
 

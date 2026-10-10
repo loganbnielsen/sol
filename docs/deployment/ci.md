@@ -117,5 +117,6 @@ This writes only the target's `sol-secrets` objects used by internal Jobs. It
 does not populate any application unit Secret.
 
 The target explicitly maps every required key to `sol` or `external`. An external
-key is delivered by a namespaced ESO `ExternalSecret`; the deploy waits for ESO to
-report it synced before applying the workload, and fails closed if it cannot.
+key is delivered by a namespaced ESO `ExternalSecret`; the deploy applies the workload
+only after ESO reports `Ready=True` / `SecretSynced`, and fails closed if it never does.
+Generation freshness is a separate, soft check (see the deployment guide).
