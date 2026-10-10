@@ -20,7 +20,7 @@ portability requirements:
 3. **Application workloads** — sol-generated Kubernetes manifests for
    `-svc`/`-worker`/`-fn`, Services, NetworkPolicies. One shared OCaml model
    (`sol_cli_manifest.ml` → `sol_cli_manifest_yaml.ml` → `sol_cli_deployment_render.ml`)
-   renders these identically for `sol up` (local) and `sol deploy` (cloud).
+   renders these identically for `sol local deploy` (local) and `sol deploy` (cloud).
 
 Layers 1 and 3 are sound: Layer 1's providers are genuinely different
 infrastructure primitives with no meaningful shared desired state to
@@ -38,7 +38,7 @@ describes an intended invariant but enforces nothing.
 This stopped being theoretical when BUG-013 fixed Loki's
 `commonConfig.replication_factor` in `platform/cloud/modules/platform/main.tf` and
 nobody thought to check `cmd_local.ml`'s independent Loki config, which
-still lacks the fix (BUG-016): a fresh `sol local infra up` today can hit the
+still lacks the fix (BUG-016): a fresh `sol local deploy` today can hit the
 exact ring-quorum failure BUG-013 already fixed in production. The
 follow-up code-layer audit
 found three more instances of the same failure mode (Alloy River config,

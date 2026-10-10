@@ -14,7 +14,6 @@ let () =
       ; Cmd_contract.cmd
       ; Cmd_local.cmd
       ; Cmd_plan.cmd
-      ; Cmd_up.cmd
       ; Cmd_deploy.cmd
       ; Cmd_destroy.cmd
       ; Cmd_migrate.cmd

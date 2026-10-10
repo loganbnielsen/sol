@@ -893,8 +893,8 @@ let target_arg =
     ~doc:
       "Deployment target path: <env>/<provider>/<region>, e.g. dev/aws/us-east-1 — same \
        convention as 'sol plan'. Resolves sol.yml, then the environment and target in \
-       sol/environments.yml, for registry/env defaults. Unlike 'sol up' (local-only, no \
-       target concept), this is required."
+       sol/environments.yml, for registry/env defaults. Unlike 'sol local deploy' \
+       (local-only, no target concept), this is required."
 ;;
 
 let dry_run_flag =
@@ -1130,8 +1130,8 @@ let await_delegation_arg =
 let man =
   [ `S Manpage.s_description
   ; `P
-      "Like 'sol up' without the build step: the images must already be in the registry, \
-       addressed by --image-tag or by an immutable --image-ref."
+      "Like 'sol local deploy' without the build step: the images must already be in the \
+       registry, addressed by --image-tag or by an immutable --image-ref."
   ; `P
       "The first run for an account is guided in place (DEC-057 §2): when this deploy \
        cannot reach the target's cluster, Sol observes the target's durable installation \
@@ -1171,12 +1171,13 @@ let cmd =
        "deploy"
        ~doc:
          "Reconcile a target's infrastructure, authorization and workloads, deploying \
-          pre-built images. Like 'sol up' but skips the build step — images must already \
-          be in the registry. Takes a required TARGET positional \
-          (<env>/<provider>/<region>, e.g. dev/aws/us-east-1), unlike 'sol up' whose \
-          positional is the optional service-path filter — 'sol up' is local-only and \
-          has no target to resolve. A first run against an uninstalled account is guided \
-          in place rather than requiring a separate bootstrap command first."
+          pre-built images. Like 'sol local deploy' but skips the build step — images \
+          must already be in the registry. Takes a required TARGET positional \
+          (<env>/<provider>/<region>, e.g. dev/aws/us-east-1), unlike 'sol local deploy' \
+          whose positional is the optional service-path filter — 'sol local deploy' is \
+          local-only and has no target to resolve. A first run against an uninstalled \
+          account is guided in place rather than requiring a separate bootstrap command \
+          first."
        ~man)
     Term.(
       const

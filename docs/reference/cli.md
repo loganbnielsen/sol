@@ -19,8 +19,8 @@ The narrative of what each command does in a deployment belongs to
 ## Addressing
 
 Remote lifecycle commands take an explicit target (`<env>/<provider>/<region>`).
-Local development has three distinct workflows: `sol local …` manages the
-local cluster, `sol up` builds images and deploys them to that cluster, and
+Local development has two distinct workflows: `sol local deploy` establishes the
+local cluster and its infrastructure and deploys the workspace to it, and
 `sol local run` runs workspace services as native processes. There is no
 ambient current remote target.
 
@@ -47,7 +47,8 @@ documented with that command rather than listed here.
 ## Target-addressed commands
 
 The target is the positional. `sol deploy` reconciles the whole target and takes no
-`--scope`; `sol up` and `sol rollback` still narrow to a domain or unit with `--scope`.
+`--scope`; `sol local deploy` and `sol rollback` still narrow to a domain or unit with
+`--scope`.
 
 <!-- BEGIN GENERATED: target -->
 | command | positional | flags | exit | purpose |
@@ -73,7 +74,6 @@ The scope is the positional (omitted means the workspace); `--target` selects th
 | command | positional | flags | exit | purpose |
 |---|---|---|---|---|
 | `sol check` | — | `--scope=DOMAIN[/UNIT]` | documented | Validate Sol workload declarations without Docker or |
-| `sol up` | — | `--confirm-group-change`, `--dry-run`, `--keep-releases=N`, `--scope=DOMAIN[/UNIT]`, `--tag=TAG` | documented | Build images, synthesize k8s manifests, and deploy to the |
 <!-- END GENERATED: scope -->
 
 ## Workspace commands
@@ -105,9 +105,8 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 <!-- BEGIN GENERATED: local -->
 | command | positional | flags | exit | purpose |
 |---|---|---|---|---|
-| `sol local infra down` | — | `--cluster` | documented | Stop port-forwards (and optionally delete the |
-| `sol local infra status` | — | — | documented | Show infra pod health and registered |
-| `sol local infra up` | — | — | documented | Provision local k3d cluster and deploy all |
+| `sol local deploy` | — | `--confirm-group-change`, `--dry-run`, `--keep-releases=N`, `--scope=DOMAIN[/UNIT]`, `--tag=TAG` | documented | Build images, synthesize k8s manifests, and deploy |
+| `sol local down` | — | — | documented | Stop Sol's local port-forwards. The k3d cluster and |
 | `sol local migrate` | — | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply migrations against the local cluster's |
 | `sol local releases` | — | — | documented | List the release records Sol's local cluster |
 | `sol local rollback` | RELEASE_ID | — | documented | Restore a recorded release boundary on the local |

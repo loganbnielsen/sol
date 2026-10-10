@@ -29,7 +29,7 @@ let validate_key key =
   then
     Error
       "SOL_ALLOW_UNVERIFIED_JWT is reserved: it allows JWT auth without signature \
-       checks, and `sol up` sets it on the local cluster only"
+       checks, and `sol local deploy` sets it on the local cluster only"
   else if String.equal key "SOL_ALLOW_PLAINTEXT_PEER_AUTH"
   then
     Error

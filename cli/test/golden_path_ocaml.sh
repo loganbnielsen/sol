@@ -26,7 +26,7 @@ printf '\n[service]\ncalls = ["checkout/checkout_svc"]\n' >> app/payments/charge
 # yet, and this is the only place a real cluster is already up --
 # add one here (rather than a whole new example app) to exercise
 # scheduled_concurrency/backoff_limit rendering
-# on a real deployed CronJob, in the same sol up pass as everything
+# on a real deployed CronJob, in the same sol local deploy pass as everything
 # else so this does not need its own health-wait cycle.
 # `sol new fn` appends _fn to the given name itself (the same way
 # `sol new svc checkout/checkout` above produced checkout_svc), so
@@ -55,20 +55,33 @@ fi
 eval $(opam env)
 dune build
 
-sol local infra up
+# The first `sol local deploy` establishes the cluster and its infrastructure,
+# then refuses because the workspace's secrets are not seeded yet — ordinary
+# deploy delivers secret references and never writes a value. That refusal
+# happens after the cluster is up, which is exactly what `sol local secret set`
+# needs: it creates the namespace and writes the secret. The second run reuses
+# the cluster (never recreating it) and deploys.
+first_deploy_log="$GITHUB_WORKSPACE/first-local-deploy.log"
+if sol local deploy >"$first_deploy_log" 2>&1; then
+  echo "::error::sol local deploy deployed before the required secrets were seeded"
+  exit 1
+fi
+if ! grep -F 'POSTGRES_URL' "$first_deploy_log" >/dev/null; then
+  echo "::error::the first sol local deploy did not refuse by naming the missing secret key"
+  cat "$first_deploy_log"
+  exit 1
+fi
 
-# Ordinary deploy delivers secret references and never
-# writes a value, so seed the workspace secrets first. `sol local
-# secret set` is the only Sol path that writes one, and it creates
-# the namespace it needs.
+# `sol local secret set` is the only Sol path that writes a value, and it
+# creates the namespace it needs.
 sol local secret set POSTGRES_URL \
   --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
 sol local secret set SOL_API_KEY --value dev-internal-key
 
-sol up
+sol local deploy
 
-# `sol local infra up` installs ingress-nginx and forwards
-# the controller to localhost:8088, so the Ingress `sol up` generated
+# `sol local deploy` installs ingress-nginx and forwards
+# the controller to localhost:8088, so the Ingress `sol local deploy` generated
 # for charge_svc must route a request end to end. A service with no
 # declared ingress_host gets a per-service dev host
 # (`<svc>.<ns>.localhost`), so send it as the Host header; derive the
@@ -183,7 +196,7 @@ echo "declared service-call wiring (env + NetworkPolicy pair) applied OK"
 sol local releases > "$GITHUB_WORKSPACE/releases.txt"
 grep -F 'ID' "$GITHUB_WORKSPACE/releases.txt" >/dev/null
 if [ "$(wc -l < "$GITHUB_WORKSPACE/releases.txt")" -lt 2 ]; then
-  echo "::error::FEAT-067: sol up recorded no release"
+  echo "::error::FEAT-067: sol local deploy recorded no release"
   exit 1
 fi
 listed_ids=$(awk 'NR>1 {print $1}' "$GITHUB_WORKSPACE/releases.txt" | tr '\n' ' ')

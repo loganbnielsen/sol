@@ -164,7 +164,7 @@ validated key. Missing header or wrong value → 401.
 > and tests only. Never put it on a route reachable from outside a developer machine;
 > use `Verified_signature_required` (below) everywhere else. `Service.Make.run` refuses
 > to start (`Config` error) when a route or `metrics_auth` uses it, unless
-> `SOL_ALLOW_UNVERIFIED_JWT=1`. `sol up` sets that on the local cluster only;
+> `SOL_ALLOW_UNVERIFIED_JWT=1`. `sol local deploy` sets that on the local cluster only;
 > `sol deploy` and GitOps emission never do (SEC-006).
 
 For local development only (`verification = Unverified_dev_only`):

@@ -222,11 +222,11 @@ deploy_workspace() {
   if [ "$SKIP_DEPLOY" = 1 ]; then return 0; fi
   [ -n "$WORKSPACE" ] || { fail_row "WORKSPACE is not set, so the workspace cannot be deployed"; return 1; }
   mkdir -p "$LOG_DIR/rows"
-  log_cmd "(cd $WORKSPACE && $SOL up)"
+  log_cmd "(cd $WORKSPACE && $SOL local deploy)"
   if ( cd "$WORKSPACE" && "$SOL" up ) >>"$LOG_DIR/rows/deploy.txt" 2>&1; then
-    pass "deployed $WORKSPACE with sol up"
+    pass "deployed $WORKSPACE with sol local deploy"
   else
-    fail_row "sol up failed; see $LOG_DIR/rows/deploy.txt"
+    fail_row "sol local deploy failed; see $LOG_DIR/rows/deploy.txt"
     return 1
   fi
 }

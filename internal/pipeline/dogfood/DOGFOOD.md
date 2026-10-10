@@ -10,7 +10,7 @@ the product claim:
 > From a prepared Sol substrate, a developer can create, deploy, and reach a new
 > service in minutes without writing Kubernetes, Helm, Terraform, or CI glue.
 >
-> "Minutes" assumes the Docker image build cache is warm. The first `sol up` on a
+> "Minutes" assumes the Docker image build cache is warm. The first `sol local deploy` on a
 > machine that has never built the generated images also compiles the shared opam
 > dependencies inside the image and takes several minutes (measured ~5m34s for the
 > first workspace vs ~22s for the next one — see FRIC-024).
@@ -97,23 +97,23 @@ upstream install script to a shell: k3d's own `install.sh` targets
 back to a sudo prompt anyway (FRIC-019).
 
 If Docker was installed via apt and your user is not yet in the `docker` group,
-either re-login or run `newgrp docker` before `sol local infra up` — otherwise
+either re-login or run `newgrp docker` before `sol local deploy` — otherwise
 every k3d/kubectl call fails to reach the daemon.
 
-k3d is pinned to the version in that script because `sol local infra up` passes
+k3d is pinned to the version in that script because `sol local deploy` passes
 chart values tuned against it (Redpanda CPU/replica settings, node-exporter
 disable flag). Older k3d versions may reject those values or install different
 chart defaults.
 
 Docker Engine 29 removed every Docker API below 1.44, while k3d's client still
-speaks 1.43. `sol local infra up` bridges that automatically: it pins
+speaks 1.43. `sol local deploy` bridges that automatically: it pins
 `DOCKER_API_VERSION` to the daemon's minimum for its k3d calls (FRIC-017), so the
 combination works without any manual environment changes.
 
-`sol up` builds through BuildKit when the `docker-buildx` plugin is present
+`sol local deploy` builds through BuildKit when the `docker-buildx` plugin is present
 (recommended: the generated Dockerfiles disable provenance/SBOM attestations,
 which some cloud container runtimes cannot pull). Stock Ubuntu `docker.io`
-ships no buildx plugin, so without it `sol up` falls back to Docker's legacy
+ships no buildx plugin, so without it `sol local deploy` falls back to Docker's legacy
 builder — which rejects the attestation flags outright — and prints a warning
 instead (FRIC-018). Installing the `docker-buildx` package or dropping the
 plugin into `~/.docker/cli-plugins/` restores the BuildKit path.
@@ -223,13 +223,13 @@ Verify the generated workspace builds:
 Provision or reconcile local substrate:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sol local infra up
+/usr/bin/time -f 'elapsed=%E' sol local deploy
 ```
 
 Deploy services:
 
 ```bash
-/usr/bin/time -f 'elapsed=%E' sol up
+/usr/bin/time -f 'elapsed=%E' sol local deploy
 ```
 
 Apply migrations:
@@ -350,9 +350,9 @@ OCaml:
 |------|---------|
 | sol new workspace | |
 | dune build | |
-| sol local infra up, fresh cluster | |
-| sol local infra up, existing cluster | |
-| sol up | |
+| sol local deploy, fresh cluster | |
+| sol local deploy, existing cluster | |
+| sol local deploy | |
 | sol migrate | |
 | first successful curl | |
 
@@ -389,7 +389,7 @@ _(links or IDs of any tickets created from friction/findings above)_
   `vendor/framework`. This unblocks dogfood, but it is
   not the final distribution model. The long-term answer is opam packages or an
   explicit `sol sdk vendor` command.
-- `sol local infra up` is substrate bootstrap/reconcile work. It should not be counted as
+- `sol local deploy` is substrate bootstrap/reconcile work. It should not be counted as
   everyday deploy latency once a substrate exists.
 
 ---
@@ -401,7 +401,7 @@ and reach all of these without editing generated files:
 
 - generated workspace builds
 - local substrate is healthy
-- `sol up` deploys all generated services
+- `sol local deploy` deploys all generated services
 - `sol migrate` applies migrations
 - `sol local status` shows ready pods and a reachable URL
 - `curl /health` succeeds

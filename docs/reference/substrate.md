@@ -166,7 +166,7 @@ The following substrate inputs must exist before running `sol deploy`.
   `ingress_host` in that zone (`route53_zone_id` / `route53_nameservers` are
   `platform/cloud/aws/cluster` outputs; on GCP use the Cloud DNS zone). A wildcard
   record such as `*.acme.com` covers every service in one entry.
-- Locally, `sol local infra up` installs the same ingress-nginx chart (NodePort) and
+- Locally, `sol local deploy` installs the same ingress-nginx chart (NodePort) and
   forwards the controller to `http://localhost:8088`. Reach a service there
   with its dev host as the `Host` header, e.g.
   `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`
@@ -208,7 +208,7 @@ Two consequences worth stating plainly, because they are what this contract refu
 
 ## What Sol Generates
 
-Running `sol deploy` (or `sol up` locally) produces the following Kubernetes
+Running `sol deploy` (or `sol local deploy` locally) produces the following Kubernetes
 objects for each service in your workspace:
 
 | Object | When generated |
@@ -277,10 +277,10 @@ Sol deliberately does not provision:
 
 ### k3d (Local Development)
 
-`sol local infra up` automates the full local substrate:
+`sol local deploy` automates the full local substrate:
 
 ```
-sol local infra up
+sol local deploy
 ```
 
 This command starts a k3d cluster, a local registry container at
@@ -524,4 +524,4 @@ deploy the same release while only one of them claims the profile.
 | DNS, TLS certificates | You (Terraform / cert-manager / cloud console) |
 | Kubernetes Secrets (values) | You (sealed-secrets, External Secrets Operator, etc.) |
 | Application manifests | **Sol** (`sol deploy`) |
-| Local dev substrate | **Sol** (`sol local infra up`) |
+| Local dev substrate | **Sol** (`sol local deploy`) |

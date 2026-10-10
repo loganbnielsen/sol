@@ -234,7 +234,7 @@ let test_a_required_failure_stops_owned_endpoints () =
       Windtrap.bool
       ~msg:"the failure gives retry guidance and says the cluster survives"
       true
-      (Sol_cli_string.contains ~needle:"re-run `sol local infra up`" message
+      (Sol_cli_string.contains ~needle:"re-run `sol local deploy`" message
        && Sol_cli_string.contains ~needle:"left in place" message);
     Windtrap.equal
       Windtrap.bool

@@ -28,8 +28,8 @@
   cmd_check
   cmd_contract
   cmd_local
+  cmd_local_deploy
   cmd_plan
-  cmd_up
   cmd_deploy
   cmd_destroy
   cmd_deploy_event

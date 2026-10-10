@@ -104,7 +104,7 @@ The boundary the contracts encode:
   explicitly denied infrastructure, IAM, and repository-lifecycle mutation, so
   publishing an image cannot also grant provisioning or deploy authority. No
   target field names this ARN — Sol's own execution never resolves it.
-  `sol up` never touches AWS at all (local-only, no target concept); a CI
+  `sol local deploy` never touches AWS at all (local-only, no target concept); a CI
   pipeline authenticates as this identity for its own `docker push` step,
   entirely outside Sol, before calling `sol deploy` with the resulting digest;
 - **deploy** — may `DescribeCluster` and mutate application objects through a

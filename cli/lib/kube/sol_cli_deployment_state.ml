@@ -8,8 +8,9 @@
     guard that warns before a deploy drops a group compares the new plan's declared
     intent against this record and the record must exist separately.
 
-    The writers leave the baseline for the lifecycle they completed: local [sol up] and
-    direct [sol deploy] record the plan's declared intent, while rollback records the
+    The writers leave the baseline for the lifecycle they completed: local [sol local
+    deploy] and direct [sol deploy] record the plan's declared intent, while rollback
+    records the
     restored release's applied groups because it restores that boundary. A missing
     record means a first deployment; an unreadable record fails the guard closed unless
     the operator passes [--confirm-group-change]. Neither may be read as an empty or

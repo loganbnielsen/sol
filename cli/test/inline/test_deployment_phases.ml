@@ -187,9 +187,9 @@ let make_plan ?(env = customer_env) services : Sol_cli_deployment_plan.t =
   }
 ;;
 
-let test_up_request_uses_explicit_tag () =
+let test_local_deploy_request_uses_explicit_tag () =
   let r =
-    Sol_cli_command_request.make_up_request
+    Sol_cli_command_request.make_local_deploy_request
       ~scope:None
       ~dry_run:false
       ~tag:(Some "v1.2.3")
@@ -203,9 +203,9 @@ let test_up_request_uses_explicit_tag () =
   | Error msg -> Windtrap.fail msg
 ;;
 
-let test_up_request_falls_back_to_git_sha () =
+let test_local_deploy_request_falls_back_to_git_sha () =
   let r =
-    Sol_cli_command_request.make_up_request
+    Sol_cli_command_request.make_local_deploy_request
       ~scope:None
       ~dry_run:false
       ~tag:None
@@ -221,9 +221,9 @@ let test_up_request_falls_back_to_git_sha () =
 
 let git_unavailable () = Error "fatal: not a git repository"
 
-let test_up_request_warns_on_fallback_tag () =
+let test_local_deploy_request_warns_on_fallback_tag () =
   match
-    Sol_cli_command_request.make_up_request
+    Sol_cli_command_request.make_local_deploy_request
       ~scope:None
       ~dry_run:false
       ~tag:None
@@ -249,9 +249,9 @@ let test_up_request_warns_on_fallback_tag () =
          (Sol_cli_string.contains ~needle:"--image-tag" w))
 ;;
 
-let test_up_request_resolved_sha_has_no_warning () =
+let test_local_deploy_request_resolved_sha_has_no_warning () =
   match
-    Sol_cli_command_request.make_up_request
+    Sol_cli_command_request.make_local_deploy_request
       ~scope:None
       ~dry_run:false
       ~tag:None
@@ -308,9 +308,9 @@ let test_deploy_request_tags_with_resolved_sha () =
   | Ok req -> Windtrap.equal Windtrap.string ~msg:"sha tag" "abc1234" req.image_tag
 ;;
 
-let test_up_request_preserves_mode () =
+let test_local_deploy_request_preserves_mode () =
   let r =
-    Sol_cli_command_request.make_up_request
+    Sol_cli_command_request.make_local_deploy_request
       ~scope:None
       ~dry_run:true
       ~tag:(Some "t")
@@ -1159,9 +1159,9 @@ let test_up_execution_descriptor_uses_host_push_image () =
     exec.dockerfile
 ;;
 
-let test_up_request_rejects_nonpositive_keep () =
+let test_local_deploy_request_rejects_nonpositive_keep () =
   let r =
-    Sol_cli_command_request.make_up_request
+    Sol_cli_command_request.make_local_deploy_request
       ~scope:None
       ~dry_run:false
       ~tag:(Some "t")
@@ -1194,21 +1194,23 @@ let test_deploy_request_rejects_nonpositive_keep () =
 ;;
 
 let%test "request_validation: up: explicit tag used" =
-  test_up_request_uses_explicit_tag ()
+  test_local_deploy_request_uses_explicit_tag ()
 ;;
 
 let%test "request_validation: up: git sha fallback" =
-  test_up_request_falls_back_to_git_sha ()
+  test_local_deploy_request_falls_back_to_git_sha ()
 ;;
 
-let%test "request_validation: up: mode preserved" = test_up_request_preserves_mode ()
+let%test "request_validation: local deploy: mode preserved" =
+  test_local_deploy_request_preserves_mode ()
+;;
 
 let%test "request_validation: up: unresolvable sha warns (BUG-058)" =
-  test_up_request_warns_on_fallback_tag ()
+  test_local_deploy_request_warns_on_fallback_tag ()
 ;;
 
 let%test "request_validation: up: resolved sha, no warning" =
-  test_up_request_resolved_sha_has_no_warning ()
+  test_local_deploy_request_resolved_sha_has_no_warning ()
 ;;
 
 let%test "request_validation: deploy: unresolvable sha refused (BUG-058)" =
@@ -1252,7 +1254,7 @@ let%test "request_validation: deploy: mutable image ref rejected" =
 ;;
 
 let%test "request_validation: up: non-positive keep-releases rejected" =
-  test_up_request_rejects_nonpositive_keep ()
+  test_local_deploy_request_rejects_nonpositive_keep ()
 ;;
 
 let%test "request_validation: deploy: non-positive keep-releases rejected" =

@@ -225,11 +225,11 @@ deploy_scopes() {
   if [ "$SKIP_DEPLOY" = 1 ]; then return 0; fi
   [ -n "$WORKSPACE" ] || { fail_row "WORKSPACE is not set, so the workspace cannot be deployed"; return 1; }
   mkdir -p "$LOG_DIR/rows"
-  log_cmd "(cd $WORKSPACE && $SOL up --scope=demo_ts)"
+  log_cmd "(cd $WORKSPACE && $SOL local deploy --scope=demo_ts)"
   if ( cd "$WORKSPACE" && "$SOL" up --scope=demo_ts ) >>"$LOG_DIR/rows/deploy-ts.txt" 2>&1; then
-    pass "deployed the demo_ts scope with sol up --scope=demo_ts"
+    pass "deployed the demo_ts scope with sol local deploy --scope=demo_ts"
   else
-    fail_row "sol up --scope=demo_ts failed; see $LOG_DIR/rows/deploy-ts.txt"
+    fail_row "sol local deploy --scope=demo_ts failed; see $LOG_DIR/rows/deploy-ts.txt"
     return 1
   fi
 }

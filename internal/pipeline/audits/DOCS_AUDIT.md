@@ -32,10 +32,10 @@ Every documented `sol` command must exist, have the documented shape, and behave
 
 ### Checklist
 
-* [ ] **Every documented command exists:** `sol new`, `sol local`, `sol up`, `sol deploy`, `sol destroy`, `sol target show`, `sol target reconcile`, `sol migrate`, `sol rollback`, and any documented subcommands are registered in the CLI.
+* [ ] **Every documented command exists:** `sol new`, `sol local`, `sol local deploy`, `sol deploy`, `sol destroy`, `sol target show`, `sol target reconcile`, `sol migrate`, `sol rollback`, and any documented subcommands are registered in the CLI.
 * [ ] **Documented flags exist:** Flags shown in docs are present in the Cmdliner definitions and have the documented names, defaults, and required/optional status.
 * [ ] **Output promises are true:** If docs say a command prints URLs, health, endpoints, rollback status, or provisioned resources, the command actually prints them.
-* [ ] **Local vs CI deploy semantics are clear:** `sol up` and `sol deploy` are documented with their real responsibilities and failure modes.
+* [ ] **Local vs CI deploy semantics are clear:** `sol local deploy` and `sol deploy` are documented with their real responsibilities and failure modes.
 * [ ] **Docs use Sol commands first:** User-facing docs do not require raw `kubectl`, `docker`, `rpk`, `terraform`, cloud CLIs, or repo-local bash scripts for normal workflows unless explicitly labeled as advanced or fallback.
 
 ---

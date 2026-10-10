@@ -380,7 +380,7 @@ let run_gate ~on_refused gate =
     Error (gate_message failure)
 ;;
 
-(* The shared deploy mutation/recording owner. Local `sol up` and cloud/direct
+(* The shared deploy mutation/recording owner. Local `sol local deploy` and cloud/direct
    `sol deploy` both run this under their boundary lease, so the authoritative
    prior-contract read, presentation, prerequisite gates, group guard, retained
    state, execution and durable recording have one ordered owner. The

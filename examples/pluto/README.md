@@ -550,11 +550,11 @@ closed rather than being reported as removed.
 ## CLI commands
 
 ```bash
-sol local infra up        # provision local k3d cluster + infra
+sol local deploy          # establish local k3d cluster + infra, then stop at the unseeded secrets
 # Secrets are the one input a deploy never writes; create them first.
 sol local secret set POSTGRES_URL --value postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
 sol local secret set SOL_API_KEY --value dev-internal-key
-sol up                    # verify the secrets, then build and apply the workloads
+sol local deploy          # verify the secrets, then build and apply the workloads
 kubectl get pods --all-namespaces  # inspect local workloads
 sol local migrate # apply database migrations
 ```

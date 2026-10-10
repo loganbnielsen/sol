@@ -306,7 +306,7 @@ The reconciliation runs where the registry is reachable, after the destination i
 established and before any workload moves, so a deploy that cannot satisfy the contract
 fails before rollout:
 
-- `sol up` runs `--apply` locally, because the local target's dependencies are reachable
+- `sol local deploy` runs `--apply` locally, because the local target's dependencies are reachable
   from the workstation (and so the workspace's own toolchain must be).
 - `sol deploy` runs it inside the destination, because a private registry may only be
   reachable from there. It submits a Job that runs the deployment's own application image

@@ -354,8 +354,8 @@ let refuse_unverified_jwt metrics_auth =
       (`Config
           (Printf.sprintf
              "a route uses Unverified_dev_only JWT auth, which accepts tokens without \
-              checking their signature. It runs only where %s=1 (sol up sets this on the \
-              local cluster). Use Verified_signature_required."
+              checking their signature. It runs only where %s=1 (sol local deploy sets \
+              this on the local cluster). Use Verified_signature_required."
              unverified_jwt_opt_in))
   else Ok ()
 ;;

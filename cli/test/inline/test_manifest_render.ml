@@ -2677,7 +2677,7 @@ let%test "fn: identity ConfigMap carries the taxonomy" =
   test_fn_identity_configmap_carries_the_taxonomy ()
 ;;
 
-let%test "svc: identity env present without env (sol up)" =
+let%test "svc: identity env present without env (sol local deploy)" =
   test_identity_env_absent_from_local_render ()
 ;;
 

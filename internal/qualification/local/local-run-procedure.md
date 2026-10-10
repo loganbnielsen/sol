@@ -23,9 +23,9 @@ observe a provider, so no provider claim may be promoted from it.
 ## 2. Environment prerequisites (observed 2026-10-03)
 
 1. **One `sol-local` cluster, so local runs serialize.** `Sol_cli_local_cluster.name`
-   is the literal `sol-local`; `sol local infra up` manages exactly that cluster.
+   is the literal `sol-local`; `sol local deploy` manages exactly that cluster.
    Two local actors cannot run concurrently. Record which actor held it.
-2. **The run owns the host ports it declares.** `sol local infra up` port-forwards
+2. **The run owns the host ports it declares.** `sol local deploy` port-forwards
    kafka `9092`, schema registry `8081`, postgres `5432`, loki `3100`, grafana
    `3000`, prometheus `9090`, pushgateway `9091`, tempo `4318`, tempo-query `3200`
    and ingress `8088`, and the k3d registry binds `5000`. Leftover `ensure-*.sh`
@@ -39,7 +39,7 @@ observe a provider, so no provider claim may be promoted from it.
 4. **Host toolchain.** `docker` (daemon up), `k3d`, `helm`, `kubectl`, and a `sol`
    binary — the released bundle's `bin/sol` for a clean-user row, or the checkout
    build for development. The harness fails closed naming whichever is missing.
-5. **A workspace.** `examples/pluto` is the reference workspace. `sol local infra up`
+5. **A workspace.** `examples/pluto` is the reference workspace. `sol local deploy`
    reads its declared resources (`sol.yml`), so run it from the workspace root.
 
 ## 3. Phases and commands
@@ -53,11 +53,8 @@ H=internal/qualification/local/local-qual.sh
 # record identity, check tools, record the ambient context — no mutation
 SOL=<bin/sol> WORKSPACE=examples/pluto LOG_DIR=/tmp/qual-local-1 bash $H preflight
 
-# provision/reconcile the cluster and capture its inventory
+# provision/reconcile the cluster, deploy the workspace and capture its inventory
 ... bash $H infra
-
-# capture status (the operator's own view) after any change
-... bash $H status
 
 # drive the acceptance rows (needs the reference applications; see §5)
 ... ROWS_SH=.../local-rows.sh bash $H rows
@@ -76,7 +73,7 @@ SOL=<bin/sol> WORKSPACE=examples/pluto LOG_DIR=/tmp/qual-local-1 bash $H preflig
 A clean-user local run starts from a fresh cluster:
 
 ```sh
-(cd examples/pluto && sol local infra down --cluster)
+(cd examples/pluto && sol local down) && k3d cluster delete sol-local
 ... bash $H preflight && ... bash $H infra
 ```
 
@@ -88,8 +85,9 @@ one is a deviation, and the run record must say so.
 
 `$LOG_DIR` is the bundle. `capture` writes `evidence-manifest.txt` (path and size per
 file). Members: `run-identity.txt` (revision, `sol --version`, workspace, cluster,
-start time, ambient context, tool versions), `infra-up.log`, `infra-status.log`,
-`namespaces.txt`, `helm-releases.txt`, `pods.txt`, `teardown-verdict.txt`, and the
+start time, ambient context, tool versions), `local-deploy.log`, `local-down.log`,
+`cluster-delete.log`, `namespaces.txt`, `helm-releases.txt`, `pods.txt`,
+`teardown-verdict.txt`, and the
 row drivers' own logs. Copy the bundle outside Sol's 20-run pruning window
 (outside any ephemeral runtime directory) before it can be lost.
 
@@ -129,7 +127,7 @@ commands' verbatim output; no namespace-specific driver can establish them.
 ### The OCaml namespace's rows (`FEAT-132`)
 
 `rows-ocaml.sh` in this directory is the OCaml half's driver. It deploys the
-workspace (`sol up`, unless `ROWS_OCAML_SKIP_DEPLOY=1`), then drives its rows
+workspace (`sol local deploy`, unless `ROWS_OCAML_SKIP_DEPLOY=1`), then drives its rows
 and writes each row's verbatim commands and output to `$LOG_DIR/rows/<row>.txt`
 with a `verdict` line; a row whose observation did not hold exits non-zero and is
 named. Run it directly, or pass it as `ROWS_SH`:

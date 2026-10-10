@@ -1559,7 +1559,7 @@ let test_local_env_is_reserved () =
     | Ok _ -> Windtrap.fail "expected `local` to be rejected as an env name"
     | Error e ->
       assert (Sol_cli_string.contains ~needle:"reserved" e.message);
-      assert (Sol_cli_string.contains ~needle:"sol local infra up" e.message))
+      assert (Sol_cli_string.contains ~needle:"sol local deploy" e.message))
 ;;
 
 let test_target_cannot_resolve_to_the_local_destination () =
