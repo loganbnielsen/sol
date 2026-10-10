@@ -48,9 +48,15 @@ let spec ~domain ~name ~k8s primitive : Sol_cli_deployment_plan.service_spec =
   }
 ;;
 
-let release_id =
+(* The plan's own content id, computed from the services the way [of_services_result]
+   does, so a release record built from this fixture rederives its id and validates. *)
+let plan_release_id services =
   Sol_cli_release_id.of_content
-    { workspace = "myapp"; environment = None; workloads = []; contract = [] }
+    { workspace = "myapp"
+    ; environment = None
+    ; workloads = List.map Sol_cli_deployment_plan.release_workload_of_spec services
+    ; contract = []
+    }
 ;;
 
 let plan ?profile services : Sol_cli_deployment_plan.t =
@@ -71,7 +77,7 @@ let plan ?profile services : Sol_cli_deployment_plan.t =
   ; migrations = []
   ; schema_subjects = []
   ; consumer_groups = []
-  ; release_id
+  ; release_id = plan_release_id services
   ; requested_scope = "workspace"
   ; platform_shape = Sol_cli_profile.Local
   ; profile
@@ -373,6 +379,170 @@ esac
          (reports_with ~evidence:[ recorded "live-uid" ]))
 ;;
 
+(* The deploy-path half of whole-target reconciliation: a workload the target no longer
+   declares is removed only while the live UID equals the UID the superseded release
+   recorded, and removal is deferred -- nothing removed, and said so -- when the live set
+   cannot be observed. This drives the deploy's own [remove_surplus_workloads], not just
+   the prune boundary. *)
+let release_configmap_files ~dir ~evidence_plan ~owned =
+  let release =
+    Sol_cli_release.of_plan_with_boundary
+      ~owned
+      ~apply_mode:Sol_cli_release.Direct
+      ~retained:[]
+      evidence_plan
+  in
+  let current = Filename.concat dir "current-release.json" in
+  let record = Filename.concat dir "release-record.json" in
+  write_file current (Sol_cli_release.to_current_configmap_json release);
+  write_file record (Sol_cli_release.to_configmap_json release);
+  current, record
+;;
+
+let deployment_listing_item ~name ~namespace ~uid =
+  Printf.sprintf
+    {|{"kind":"Deployment","metadata":{"name":"%s","namespace":"%s","uid":"%s"},"spec":{"template":{"metadata":{"labels":{"workspace":"myapp"}}}}}|}
+    name
+    namespace
+    uid
+;;
+
+let listing items = Printf.sprintf {|{"items":[%s]}|} (String.concat "," items)
+
+let surplus_kubectl_script ~current ~record ~deployments ~deletes ~listing_failure =
+  let deployments_case =
+    match listing_failure with
+    | Some message ->
+      Printf.sprintf
+        "*\" get deployment -A \"*) printf '%%s\\n' '%s' >&2; exit 1 ;;"
+        message
+    | None -> Printf.sprintf "*\" get deployment -A \"*) cat %s ;;" deployments
+  in
+  Printf.sprintf
+    {|#!/bin/sh
+case " $* " in
+  *" get configmap sol-release-current-"*) cat %s ;;
+  *" get configmap sol-release-r-"*) cat %s ;;
+  %s
+  *" get rollout -A "*) printf '%%s' '{"items":[]}' ;;
+  *" get cronjob -A "*) printf '%%s' '{"items":[]}' ;;
+  *jsonpath=*)
+    case " $* " in
+      *" stale-svc "*) printf '%%s' 'uid-other' ;;
+      *) printf '%%s' 'uid-recorded' ;;
+    esac ;;
+  *" delete "*) printf '%%s\n' "$*" >> %s ;;
+  *) printf '%%s' '{}' ;;
+esac
+exit 0
+|}
+    current
+    record
+    deployments_case
+    deletes
+;;
+
+let recorded_charge_svc uid : Sol_cli_release_id.owned_object =
+  { resource = "deployment"; namespace = "myapp-payments"; name = "charge-svc"; uid }
+;;
+
+let test_deploy_removes_only_the_uid_matched_surplus () =
+  with_context (fun ctx ->
+    let dir = temp_dir () in
+    let evidence_plan =
+      plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
+    in
+    let current, record =
+      release_configmap_files
+        ~dir
+        ~evidence_plan
+        ~owned:[ recorded_charge_svc "uid-recorded" ]
+    in
+    let deployments = Filename.concat dir "deployments.json" in
+    write_file
+      deployments
+      (listing
+         [ deployment_listing_item
+             ~name:"charge-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-recorded"
+         ; deployment_listing_item
+             ~name:"stale-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-other"
+         ]);
+    let deletes = Filename.concat dir "deletes.log" in
+    with_scripted_kubectl
+      (surplus_kubectl_script
+         ~current
+         ~record
+         ~deployments
+         ~deletes
+         ~listing_failure:None)
+      (fun () ->
+         ignore
+           (Sol_cli_report.collect (fun () ->
+              Sol_cli_deploy_run.remove_surplus_workloads ctx (plan [])));
+         let log = read_file deletes in
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the UID-matched surplus workload is removed"
+           true
+           (Sol_cli_string.contains
+              ~needle:"delete deployment charge-svc -n myapp-payments"
+              log);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"its auxiliary follows the owning workload's match"
+           true
+           (Sol_cli_string.contains
+              ~needle:"delete serviceaccount charge-svc -n myapp-payments"
+              log);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"a surplus workload with no matching recorded UID is retained"
+           false
+           (Sol_cli_string.contains ~needle:"stale-svc" log)))
+;;
+
+let test_deploy_defers_removal_when_the_live_set_is_unobservable () =
+  with_context (fun ctx ->
+    let dir = temp_dir () in
+    let evidence_plan =
+      plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
+    in
+    let current, record =
+      release_configmap_files
+        ~dir
+        ~evidence_plan
+        ~owned:[ recorded_charge_svc "uid-recorded" ]
+    in
+    let deletes = Filename.concat dir "deletes.log" in
+    with_scripted_kubectl
+      (surplus_kubectl_script
+         ~current
+         ~record
+         ~deployments:""
+         ~deletes
+         ~listing_failure:(Some "Unable to connect to the server"))
+      (fun () ->
+         let (), lines =
+           Sol_cli_report.collect (fun () ->
+             Sol_cli_deploy_run.remove_surplus_workloads ctx (plan []))
+         in
+         let joined = String.concat "\n" (List.map snd lines) in
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"an unobservable live set defers removal and says so"
+           true
+           (Sol_cli_string.contains ~needle:"deferred" joined);
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"nothing is deleted when the live set cannot be observed"
+           ""
+           (read_file deletes)))
+;;
+
 let consumer_group_exn s =
   match Sol_cli_plan_ids.Consumer_group.of_string s with
   | Ok group -> group
@@ -643,6 +813,14 @@ let%test
     "ownership: a declared workload that is not Sol-owned is reported, then reconciled"
   =
   test_deploy_warns_only_when_the_declared_workload_is_not_owned ()
+;;
+
+let%test "removal: a surplus workload is removed only on its recorded UID match" =
+  test_deploy_removes_only_the_uid_matched_surplus ()
+;;
+
+let%test "removal: an unobservable live set defers removal" =
+  test_deploy_defers_removal_when_the_live_set_is_unobservable ()
 ;;
 
 let%test "lifecycle: a failed apply does not report success" =

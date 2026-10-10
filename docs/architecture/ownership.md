@@ -14,7 +14,7 @@ Each domain has exactly one proof, and the proofs are not interchangeable.
 
 | Domain | Proof of ownership | Enforced by |
 |---|---|---|
-| Kubernetes workload objects | the live object's `metadata.uid` equals the UID Sol captured when it applied that object | `#1304` milestone 2 — capture at apply, plan deltas, removal enforcement, guard; `#1305` consumes it for whole-target deploy and carries the `requested_scope` invariant — **in progress** |
+| Kubernetes workload objects | the live object's `metadata.uid` equals the UID Sol captured when it applied that object | capture at apply, plan deltas, removal enforcement and guard (`#1304`); consumed by whole-target `sol deploy` removal (`#1305`) |
 | Cloud/Terraform resources | exact attribution inside ADR 0005's contract boundary | `Sol_cli_ownership_reconciliation`; `#1119` |
 | Detach (authority handoff) | revocation of Sol's target-scoped execution principals | ADR 0006 |
 
@@ -48,10 +48,15 @@ created after the read that decided to delete.
 
 ### Runtime enforcement
 
-Two runtime paths remove Kubernetes workloads. Both require the recorded UID
+Three runtime paths remove Kubernetes workloads. All require the recorded UID
 match, decided by `Sol_cli_workload_ownership.owns`; the `workspace`/`release`
 labels only select which objects to look at:
 
+- `Sol_cli_deploy_run.remove_surplus_workloads` (`sol deploy`) — after a
+  whole-target apply, a live workspace workload the plan no longer declares is
+  deleted only while its live UID equals the UID the superseded release
+  recorded. An unreadable record or an unobservable live set removes nothing and
+  says so.
 - `Sol_cli_rollback.prune_workloads` — a surplus workload is deleted only while
   its live UID equals the UID the superseded release recorded. An auxiliary the
   workload realizes (ServiceAccount, ConfigMap `-env`, NetworkPolicy, Service,
@@ -65,7 +70,8 @@ labels only select which objects to look at:
 An object Sol cannot match — a record written before UID capture, a different
 UID, an absent object, or an unobservable one — is retained and reported for
 explicit adoption. The executable guard proving declarations and labels alone
-cannot authorize a deletion lands with the same milestone (`#1304`).
+cannot authorize a deletion is `cli/test/inline/test_workload_removal_guard.ml`
+(`#1304`), and `test_deploy_run.ml` drives the deploy path itself.
 
 Terraform-declared Kubernetes objects (the platform module) have a **separate**
 rule already enforced in CI: one object, one Terraform owner —

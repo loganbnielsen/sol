@@ -258,11 +258,23 @@ let service_specs_of_release (release : Sol_cli_release.t) =
           ~workspace:release.workspace
           w.spec
       in
-      go ((spec, w.applied_by) :: acc) rest
+      go (spec :: acc) rest
   in
-  let* applied = go [] release.workloads in
-  let specs = with_called_by (List.map fst applied) in
-  Ok (List.map2 (fun spec (_, applied_by) -> spec, applied_by) specs applied)
+  let* specs = go [] release.workloads in
+  let specs = with_called_by specs in
+  (* The identity each workload's objects carry is derived from its own effective spec
+     (see [Sol_cli_deployment_plan.workload_release_id]), not from the recorded deploy
+     id, so a restored workload's [release] label matches what the deploy that applied
+     this boundary rendered, while a deploy that only changed an unrelated workload did
+     not re-label it. *)
+  let identity spec =
+    Sol_cli_release_id.to_string
+      (Sol_cli_deployment_plan.workload_release_id
+         ~workspace:release.workspace
+         ~environment:release.environment
+         spec)
+  in
+  Ok (List.map (fun spec -> spec, identity spec) specs)
 ;;
 
 type migration_check_error =

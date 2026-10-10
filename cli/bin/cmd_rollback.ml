@@ -9,13 +9,13 @@ let ttl_s = Sol_cli_boundary_lease.default_ttl_s
 let wait_s = Sol_cli_boundary_lease.rollback_wait_s
 
 let apply_specs ~ensure_held ~ctx ~local ~release specs =
-  let apply_spec (spec, applied_by) =
+  let apply_spec (spec, identity) =
     let* () = ensure_held () in
     let* release_id_t =
-      Sol_cli_release_id.of_string applied_by
+      Sol_cli_release_id.of_string identity
       |> Result.map_error (fun message ->
         Printf.sprintf
-          "release %s records an unreadable applied_by id: %s"
+          "release %s records an unreadable workload identity: %s"
           release.Sol_cli_release.release_id
           message)
     in

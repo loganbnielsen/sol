@@ -292,15 +292,75 @@ let record_applied_state ~cluster ~workspace ~sha plan =
        })
 ;;
 
-let surplus_workloads ctx (plan : Sol_cli_deployment_plan.t) =
-  match
-    Sol_cli_rollback.live_workloads
-      ~ctx:ctx.execution.cluster
-      ~workspace:ctx.execution.workspace
-  with
-  | Error _ -> []
-  | Ok live ->
-    Sol_cli_rollback.unexpected_workloads ~expected:plan.services ~live |> List.map fst
+(* Whole-target reconciliation removes a workload the target no longer declares, but only
+   while positive ownership evidence authorizes it: the live object's UID must equal the
+   UID the superseded release recorded at apply (docs/architecture/ownership.md). An
+   unreadable record, an unobservable live set, a different UID or an absent object
+   retains and reports -- nothing is inferred from a declaration, a label or a name, and
+   there is no cluster-wide pruning. The workload is the unit of ownership, so the
+   auxiliaries it realizes are removed with it and a referenced PersistentVolumeClaim is
+   never deleted (DEC-033). Read after the desired workloads are applied and before the
+   new release is recorded, so the evidence is still the superseded release's. *)
+let remove_surplus_workloads (ctx : context) plan =
+  let workspace = ctx.execution.workspace in
+  let cluster = ctx.execution.cluster in
+  match Sol_cli_release_store.recorded_evidence ~ctx:cluster ~workspace with
+  | Error reason ->
+    Sol_cli_report.warn
+      "surplus workload removal deferred: the recorded ownership evidence for this \
+       workspace could not be read (%s); no live object was removed. Run `sol plan %s` \
+       to review the live workload delta."
+      reason
+      ctx.target_name
+  | Ok evidence ->
+    (match Sol_cli_rollback.live_workloads ~ctx:cluster ~workspace with
+     | Error reason ->
+       Sol_cli_report.warn
+         "surplus workload removal deferred: the live workloads for this workspace could \
+          not be observed (%s); no live object was removed. Run `sol plan %s` to review \
+          the live workload delta."
+         reason
+         ctx.target_name
+     | Ok live ->
+       let surplus =
+         Sol_cli_rollback.unexpected_workloads
+           ~expected:plan.Sol_cli_deployment_plan.services
+           ~live
+       in
+       (match Sol_cli_rollback.prune_workloads ~ctx:cluster ~evidence ~live ~surplus with
+        | Error message ->
+          Sol_cli_report.warn
+            "surplus workload removal failed; the workloads this target declares were \
+             applied, but these leftovers were not removed: %s"
+            message
+        | Ok report ->
+          List.iter
+            (fun (t : Sol_cli_rollback.prune_target) ->
+               Sol_cli_report.app
+                 "Removed %s %s/%s: this target no longer declares it."
+                 t.resource
+                 t.namespace
+                 t.name)
+            report.removed;
+          List.iter
+            (fun (t : Sol_cli_rollback.prune_target) ->
+               Sol_cli_report.app
+                 "Retained %s %s/%s: storage lifetime is not this deploy's decision \
+                  (DEC-033)."
+                 t.resource
+                 t.namespace
+                 t.name)
+            report.retained;
+          List.iter
+            (fun (u : Sol_cli_rollback.unowned_workload) ->
+               Sol_cli_report.warn
+                 "Retained %s %s/%s (%s): Sol removes a workload only while its live UID \
+                  equals the UID recorded at apply. Adopt or remove it by hand."
+                 (Sol_cli_rollback.kind_resource u.identity.kind)
+                 u.identity.namespace
+                 u.identity.name
+                 u.reason)
+            report.unowned))
 ;;
 
 (* Name every declared workload whose live object Sol does not own (a different UID, or no
@@ -495,12 +555,19 @@ let apply
       effective_access ())
     ~before_apply:(fun plan -> contract_reconciliation ctx plan)
     ~apply:(fun ~lease ~release_id:_ plan ->
-      run_plan_result
-        ctx
-        ~phase:"apply"
-        ~mode:Sol_cli_executor.Apply
-        ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
-        plan)
+      let* results =
+        run_plan_result
+          ctx
+          ~phase:"apply"
+          ~mode:Sol_cli_executor.Apply
+          ~before_apply:(fun _ -> Sol_cli_boundary_lease.ensure_held lease)
+          plan
+      in
+      (* Only once every declared workload is applied: remove the workloads this target
+         no longer declares, while the live UID still matches the recorded evidence. *)
+      let* () = Sol_cli_boundary_lease.ensure_held lease in
+      remove_surplus_workloads ctx plan;
+      Ok results)
     ~report_success
     ~push_events:(fun ~release_id plan ->
       push_events
