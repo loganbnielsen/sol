@@ -142,6 +142,16 @@ let overlay_env base over =
 
 let quoted_map pairs = pairs |> List.map (fun (k, v) -> k, Y.quoted v) |> Y.map
 let metadata ~ns ~name = Y.map [ "name", Y.string name; "namespace", Y.string ns ]
+
+let metadata_with_labels ~labels ~ns ~name =
+  Y.map
+    ([ "name", Y.string name; "namespace", Y.string ns ]
+     @
+     if labels = []
+     then []
+     else [ "labels", Y.map (List.map (fun (k, v) -> k, Y.string v) labels) ])
+;;
+
 let app_selector name = Y.map [ "app", Y.string name ]
 
 let resource ?comments ~api_version ~kind fields =
@@ -217,6 +227,7 @@ let secret_doc
       ?(base_secrets = default_secrets)
       ?(extra_secrets = [])
       ?(redact = false)
+      ?(labels = [])
       ~ns
       ~name
       ()
@@ -227,8 +238,7 @@ let secret_doc
     if redact
     then
       [ "Populate these values before applying."
-      ; "Use `sol secret set <KEY> --target <env>/<provider>/<region>` or your secrets \
-         manager."
+      ; "Use `sol secret set <TARGET> <domain>/<unit>/<KEY>` or your secrets manager."
       ]
     else []
   in
@@ -236,7 +246,7 @@ let secret_doc
     ~comments
     ~api_version:"v1"
     ~kind:"Secret"
-    [ "metadata", metadata ~ns ~name
+    [ "metadata", metadata_with_labels ~labels ~ns ~name
     ; "type", Y.string "Opaque"
     ; "stringData", quoted_map secrets
     ]

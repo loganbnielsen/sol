@@ -31,6 +31,7 @@ let target ?(kube_context = Some "prod-us-east-1") ?kubeconfig () : Sol_cli_conf
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = []
+  ; secret_authorities = []
   }
 ;;
 

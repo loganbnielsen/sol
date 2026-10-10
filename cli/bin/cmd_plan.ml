@@ -211,6 +211,21 @@ let run target_name image_refs var_file vars =
          service.source_name
          service.image)
     planning.services;
+  let* secret_authorities =
+    Sol_cli_deploy_selection.secret_authorities_for_plan ~config:cfg planning
+    |> Sol_cli_exit.of_msg
+  in
+  Printf.printf "\nSecret authorities:\n";
+  List.iter
+    (fun (unit_address, key, authority) ->
+       let source =
+         match authority with
+         | Sol_cli_config.Sol_managed -> "sol-managed Kubernetes Secret"
+         | Sol_cli_config.External { store; key } ->
+           Printf.sprintf "ESO SecretStore %s key %s" store key
+       in
+       Printf.printf "  - %s/%s: %s\n" unit_address key source)
+    secret_authorities;
   let workspace = Sol_cli_workspace.current_name () in
   let declared =
     List.map

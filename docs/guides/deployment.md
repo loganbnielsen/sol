@@ -221,8 +221,12 @@ closed if it is not effective.
 
 `SOL_TARGET` is a repository variable and is passed to `sol deploy` verbatim; the workflow never
 infers a destination from the branch or the event (DEC-016). Workload secret values are never held
-by CI (FEAT-053): seed them with `sol secret set --target <env>/<provider>/<region> <KEY>`, and the
-deploy fails closed naming any key that is missing.
+by CI (FEAT-053). Seed Sol-owned values from a secret source through stdin, for example:
+`your-secret-tool get payment-api-key | sol secret set "$SOL_TARGET" payments/charge_svc/PAYMENT_API_KEY --from-stdin`.
+Provide migration Job database access separately with
+`your-secret-tool get production-postgres-url | sol secret set "$SOL_TARGET" @platform/POSTGRES_URL --from-stdin`.
+Every required key has an explicit `sol` or `external` authority mapping in the target declaration;
+M1 refuses deployment for external keys until ESO delivery is implemented.
 
 The deploy step is the same lifecycle as local execution — `sol deploy <target>` then
 `sol migrate <target>` — so nothing about the plan, the render or the apply exists in the workflow.

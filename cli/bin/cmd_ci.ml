@@ -19,8 +19,9 @@ Next steps:
      workload cloud grant is a reviewed action separate from the deploy.
 
   The workflow runs the same `sol deploy <target>` lifecycle as local execution
-  and never infers a target. Workload secret values are seeded out of band with
-  `sol secret set --target <env>/<provider>/<region> <KEY>`.
+  and never infers a target. Secret values are seeded out of band with
+  `sol secret set <TARGET> <domain>/<unit>/<KEY>` or
+  `sol secret set <TARGET> @platform/<KEY>`.
 |}
 ;;
 

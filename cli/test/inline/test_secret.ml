@@ -21,79 +21,29 @@ let test_key_validation_rejects_hyphen () =
       msg
 ;;
 
-let test_secret_manifest_contains_value_boundary () =
+let test_unit_secret_manifest_has_only_its_explicit_values () =
   let yaml =
-    Sol_cli_secret.secret_manifest
-      ~existing_data:[ "API_TOKEN", "ZXhpc3Rpbmc=" ]
+    Sol_cli_secret.unit_secret_manifest
       ~namespace:"myapp-payments"
-      ~key:"DATABASE_URL"
-      ~value:"postgres://secret"
+      ~secret_name:"charge-svc-secrets"
+      [ "PAYMENT_KEY", "value" ]
   in
   check_bool
-    "manifest names Secret"
+    "uses the exact per-unit Secret name"
     true
-    (Sol_cli_string.contains ~needle:"kind: Secret" yaml);
+    (Sol_cli_string.contains ~needle:"name: charge-svc-secrets" yaml);
   check_bool
-    "manifest has runtime secret name"
-    true
+    "does not write the shared runtime Secret"
+    false
     (Sol_cli_string.contains ~needle:"name: sol-secrets" yaml);
   check_bool
-    "manifest preserves existing encoded key"
+    "contains only the selected unit key"
     true
-    (Sol_cli_string.contains ~needle:{|API_TOKEN: "ZXhpc3Rpbmc="|} yaml);
+    (Sol_cli_string.contains ~needle:{|PAYMENT_KEY: "value"|} yaml);
   check_bool
-    "manifest has value for k8s materialization"
-    true
-    (Sol_cli_string.contains ~needle:{|DATABASE_URL: "postgres://secret"|} yaml)
-;;
-
-let test_secret_manifest_yaml_escapes_special_values () =
-  let yaml =
-    Sol_cli_secret.secret_manifest
-      ~existing_data:[ "OLD_VALUE", "base64/with+symbols=" ]
-      ~namespace:"myapp-payments"
-      ~key:"SPECIAL_VALUE"
-      ~value:"quote: \"value\", path: C:\\tmp\\db\nnext line"
-  in
-  check_bool
-    "quotes are escaped"
-    true
-    (Sol_cli_string.contains ~needle:{|SPECIAL_VALUE: "quote: \"value\"|} yaml);
-  check_bool
-    "backslashes are escaped"
-    true
-    (Sol_cli_string.contains ~needle:{|path: C:\\tmp\\db|} yaml);
-  check_bool
-    "newlines are escaped"
-    true
-    (Sol_cli_string.contains ~needle:{|db\nnext line"|} yaml);
-  check_bool
-    "existing data is quoted safely"
-    true
-    (Sol_cli_string.contains ~needle:{|OLD_VALUE: "base64/with+symbols="|} yaml)
-;;
-
-let test_redacted_result_hides_value () =
-  let out =
-    Sol_cli_secret.redacted_result (Sol_cli_secret.Applied [ "myapp-payments" ])
-  in
-  check_string "redacted output" "secret set in 1 namespace(s)" out;
-  check_bool
-    "no secret value"
+    "does not contain a different unit's key"
     false
-    (Sol_cli_string.contains ~needle:"postgres://secret" out)
-;;
-
-let test_list_rejects_empty_namespaces () =
-  match
-    Sol_cli_secret.list
-      ~ctx:Sol_cli_kube_destination.local_context
-      ~workspace:"myapp"
-      ~namespaces:[]
-  with
-  | Ok _ -> Windtrap.fail "empty namespace list unexpectedly succeeded"
-  | Error msg ->
-    check_string "no target" "no target namespaces found for this workspace" msg
+    (Sol_cli_string.contains ~needle:"OTHER_UNIT_KEY" yaml)
 ;;
 
 let%test "validation: accepts env style key" =
@@ -103,16 +53,6 @@ let%test "validation: accepts env style key" =
 let%test "validation: rejects lowercase" = test_key_validation_rejects_lowercase ()
 let%test "validation: rejects hyphen" = test_key_validation_rejects_hyphen ()
 
-let%test "target: rejects empty namespace selection" =
-  test_list_rejects_empty_namespaces ()
+let%test "rendering: unit Secret has the exact object and keys" =
+  test_unit_secret_manifest_has_only_its_explicit_values ()
 ;;
-
-let%test "rendering: k8s materialization manifest" =
-  test_secret_manifest_contains_value_boundary ()
-;;
-
-let%test "rendering: yaml escapes special values" =
-  test_secret_manifest_yaml_escapes_special_values ()
-;;
-
-let%test "rendering: redacted result" = test_redacted_result_hides_value ()

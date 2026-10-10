@@ -2611,7 +2611,25 @@ let test_contract_job_manifest () =
   assert_absent
     "contract Job depends on no runtime Secret (it runs before the workloads create one)"
     doc
-    "sol-secrets"
+    "sol-secrets";
+  let tls_doc =
+    Sol_cli_manifest.contract_job_doc
+      ~cluster_env:
+        (Sol_cli_manifest.cluster_env Sol_cli_manifest.Sasl_ssl
+         @ [ "KAFKA_SASL_PASSWORD", "" ])
+      ~name:"sol-contract-tls"
+      ~namespace:"myapp-payments"
+      ~image:"sol-registry:5000/myapp/charge-svc:abc123"
+      ~command:[ "/usr/local/bin/contract" ]
+      ~args:[ "--apply" ]
+    |> render_doc
+  in
+  assert_contains
+    "TLS contract Job consumes the platform Secret"
+    tls_doc
+    "name: sol-secrets";
+  assert_contains "TLS contract Job mounts the CA key" tls_doc "key: KAFKA_SSL_CA_CERT";
+  assert_contains "TLS contract Job receives the SASL key" tls_doc "KAFKA_SASL_PASSWORD"
 ;;
 
 let test_contract_scope_rule () =

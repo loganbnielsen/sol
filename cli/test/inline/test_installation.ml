@@ -70,6 +70,7 @@ let aws_target : Sol_cli_config.target =
           ; "operator_role_arn", "arn:aws:iam::111122223333:role/sol-operator"
           ] )
       ]
+  ; secret_authorities = []
   }
 ;;
 
@@ -82,6 +83,7 @@ let gcp_target : Sol_cli_config.target =
   ; state_bucket = Some "sol-qualification-tfstate"
   ; base_domain = Some "qual-gcp.example.test"
   ; provider_fields = [ "gcp", [ "project_id", "sol-qualification" ] ]
+  ; secret_authorities = []
   }
 ;;
 

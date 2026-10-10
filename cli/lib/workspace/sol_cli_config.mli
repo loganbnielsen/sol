@@ -23,6 +23,20 @@ type target =
   ; node_failure_headroom_nodes : int option
   ; profile : Sol_cli_profile.t option
   ; provider_fields : (string * (string * string) list) list
+  ; secret_authorities : (string * (string * secret_authority) list) list
+  }
+
+and secret_authority =
+  | Sol_managed
+  | External of
+      { store : string
+      ; key : string
+      }
+
+type unit_secret_resolution =
+  { resolved : (string * secret_authority) list
+  ; missing : string list
+  ; additional : string list
   }
 
 val destination_of_target : target -> (Sol_cli_kube_destination.t, string) result
@@ -89,6 +103,20 @@ val format_use_ref : string -> string
 val sol_yml_services : root:string -> (service list, error) result
 val is_omitted_service : t -> name:string -> bool
 val provider_field : target -> string -> string option
+
+val secret_authority
+  :  target
+  -> unit_address:string
+  -> key:string
+  -> secret_authority option
+
+val secret_authorities_for_unit : target -> string -> (string * secret_authority) list
+
+val resolve_secret_authorities
+  :  target
+  -> unit_address:string
+  -> required_keys:string list
+  -> unit_secret_resolution
 
 val vars_with_profile_precedence
   :  has_profile:bool

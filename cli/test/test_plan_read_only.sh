@@ -22,6 +22,17 @@ prod:
       cluster_name: planned
       kube_context: planned
       state_bucket: sol-plan-state
+      secrets:
+        payments/api_svc:
+          POSTGRES_URL: sol
+          SOL_API_KEY: sol
+          KAFKA_SASL_PASSWORD: sol
+          KAFKA_SSL_CA_CERT: sol
+        payments/events_worker:
+          POSTGRES_URL: sol
+          SOL_API_KEY: sol
+          KAFKA_SASL_PASSWORD: sol
+          KAFKA_SSL_CA_CERT: sol
       aws:
         state_lock_table: sol-plan-lock
 EOF

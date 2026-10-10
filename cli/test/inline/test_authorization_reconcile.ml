@@ -315,6 +315,7 @@ let target ?(fields = []) provider =
   ; node_failure_headroom_nodes = None
   ; profile = None
   ; provider_fields = [ Sol_cli_provider.to_string provider, fields ]
+  ; secret_authorities = []
   }
 ;;
 

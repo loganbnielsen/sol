@@ -277,8 +277,8 @@ let test_scaffold_ignores_local_secret_input () =
   Sol_cli_cmd_new.new_workspace "testapp" |> Result.get_ok;
   let gitignore = read_file "testapp/.gitignore" in
   let dockerignore = read_file "testapp/.dockerignore" in
-  assert_contains ".gitignore" gitignore ".env.local";
-  assert_contains ".dockerignore" dockerignore ".env.local"
+  assert_contains ".gitignore" gitignore "sol/secrets.local/";
+  assert_contains ".dockerignore" dockerignore "sol/secrets.local/"
 ;;
 
 let test_scaffolded_workspace_has_a_real_deploy_target () =

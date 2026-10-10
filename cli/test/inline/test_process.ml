@@ -46,6 +46,73 @@ let test_stdout_and_stderr_separate () =
   check_str "stderr" "err" r.stderr
 ;;
 
+let test_process_can_start_with_an_explicit_environment_only () =
+  let original = Sys.getenv_opt "SOL_TEST_PRIVATE_ENV" in
+  Fun.protect
+    ~finally:(fun () ->
+      match original with
+      | Some value -> Unix.putenv "SOL_TEST_PRIVATE_ENV" value
+      | None -> Unix.putenv "SOL_TEST_PRIVATE_ENV" "")
+    (fun () ->
+       Unix.putenv "SOL_TEST_PRIVATE_ENV" "ambient-secret";
+       let output =
+         ok_result
+           (Sol_cli_process.run
+              (Sol_cli_process.cmd
+                 ~env:[ "SOL_TEST_EXPLICIT_ENV", "visible" ]
+                 ~inherit_env:false
+                 [ "sh"
+                 ; "-c"
+                 ; "printf '%s:%s' \"${SOL_TEST_PRIVATE_ENV-unset}\" \
+                    \"$SOL_TEST_EXPLICIT_ENV\""
+                 ]))
+       in
+       check_str
+         "the child gets only the explicit environment"
+         "unset:visible"
+         output.stdout)
+;;
+
+let test_detached_process_honors_explicit_environment_only () =
+  let path = Filename.temp_file "sol-process-env-" ".txt" in
+  Sys.remove path;
+  let original = Sys.getenv_opt "SOL_TEST_PRIVATE_ENV" in
+  Fun.protect
+    ~finally:(fun () ->
+      (match original with
+       | Some value -> Unix.putenv "SOL_TEST_PRIVATE_ENV" value
+       | None -> Unix.putenv "SOL_TEST_PRIVATE_ENV" "");
+      if Sys.file_exists path then Sys.remove path)
+    (fun () ->
+       Unix.putenv "SOL_TEST_PRIVATE_ENV" "ambient-secret";
+       let child =
+         ok_result
+           (Sol_cli_process.spawn_detached
+              (Sol_cli_process.cmd
+                 ~env:[ "SOL_TEST_EXPLICIT_ENV", "visible"; "SOL_TEST_OUTPUT", path ]
+                 ~inherit_env:false
+                 [ "sh"
+                 ; "-c"
+                 ; "printf '%s:%s' \"${SOL_TEST_PRIVATE_ENV-unset}\" \
+                    \"$SOL_TEST_EXPLICIT_ENV\" > \"$SOL_TEST_OUTPUT\""
+                 ]))
+       in
+       let rec await attempts =
+         if Sys.file_exists path
+         then In_channel.with_open_bin path In_channel.input_all
+         else if attempts = 0
+         then (
+           Sol_cli_process.stop child;
+           Windtrap.fail "detached child did not write its result")
+         else (
+           Unix.sleepf 0.01;
+           await (attempts - 1))
+       in
+       let output = await 100 in
+       Sol_cli_process.join child;
+       check_str "detached child gets only explicit environment" "unset:visible" output)
+;;
+
 let test_spawn_failed () =
   match
     err_result (Sol_cli_process.run (Sol_cli_process.cmd [ "/nonexistent-binary-xyz" ]))
@@ -274,6 +341,15 @@ let%test "run: failure_message" = test_failure_message ()
 let%test "run: error_to_string keeps stdout" = test_error_to_string_keeps_stdout ()
 let%test "run: captured stderr" = test_captured_stderr ()
 let%test "run: stdout stderr separate" = test_stdout_and_stderr_separate ()
+
+let%test "run: explicit env excludes inherited values" =
+  test_process_can_start_with_an_explicit_environment_only ()
+;;
+
+let%test "spawn_detached: explicit env excludes inherited values" =
+  test_detached_process_honors_explicit_environment_only ()
+;;
+
 let%test "run: spawn failed" = test_spawn_failed ()
 let%test "run: chdir failed" = test_chdir_failed ()
 let%test "run: no shell expansion" = test_no_shell_expansion ()

@@ -21,10 +21,6 @@ let resolve_run workspace_dir scope =
   if not (String.equal (Sys.getcwd ()) facts.Sol_cli_workspace_model.root)
   then Unix.chdir facts.Sol_cli_workspace_model.root;
   let inventory = Sol_cli_workspace_model.services facts in
-  let* secret_values =
-    Sol_cli_local_secret_input.load ~root:facts.Sol_cli_workspace_model.root
-    |> Sol_cli_exit.of_msg
-  in
   let* { requested_scope; services; _ } =
     Sol_cli_workload_selection.resolve_nonempty
       ~none:
@@ -32,6 +28,16 @@ let resolve_run workspace_dir scope =
          directories with a Dockerfile."
       scope
       inventory
+    |> Sol_cli_exit.of_msg
+  in
+  let* secret_values =
+    services
+    |> Sol_cli_result.map_list (fun (service : Sol_cli_manifest.service) ->
+      let unit_address = service.domain ^ "/" ^ service.name in
+      Sol_cli_local_secret_input.load
+        ~root:facts.Sol_cli_workspace_model.root
+        ~unit_address
+      |> Result.map (fun values -> unit_address, values))
     |> Sol_cli_exit.of_msg
   in
   let* plan =
@@ -191,8 +197,7 @@ let run_subcmd =
   Cmd.v
     (Cmd.info
        "run"
-       ~doc:
-         "Run workspace services as native processes, with local secrets from .env.local.")
+       ~doc:"Run workspace services as native processes, with unit-scoped local secrets.")
     Term.(
       const Sol_cli_exit.exit_on $ (const dev_run $ run_workspace_arg $ run_scope_arg))
 ;;
@@ -205,7 +210,6 @@ let cmd =
     ; Cmd_rollback.local_cmd
     ; Cmd_migrate.local_cmd
     ; Cmd_releases.local_cmd
-    ; Cmd_secret.local_cmd
     ; run_subcmd
     ]
 ;;

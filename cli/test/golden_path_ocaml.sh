@@ -55,28 +55,15 @@ fi
 eval $(opam env)
 dune build
 
-# The first `sol local deploy` establishes the cluster and its infrastructure,
-# then refuses because the workspace's secrets are not seeded yet — ordinary
-# deploy delivers secret references and never writes a value. That refusal
-# happens after the cluster is up, which is exactly what `sol local secret set`
-# needs: it creates the namespace and writes the secret. The second run reuses
-# the cluster (never recreating it) and deploys.
-first_deploy_log="$GITHUB_WORKSPACE/first-local-deploy.log"
-if sol local deploy >"$first_deploy_log" 2>&1; then
-  echo "::error::sol local deploy deployed before the required secrets were seeded"
-  exit 1
-fi
-if ! grep -F 'POSTGRES_URL' "$first_deploy_log" >/dev/null; then
-  echo "::error::the first sol local deploy did not refuse by naming the missing secret key"
-  cat "$first_deploy_log"
-  exit 1
-fi
-
-# `sol local secret set` is the only Sol path that writes a value, and it
-# creates the namespace it needs.
-sol local secret set POSTGRES_URL \
-  --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
-sol local secret set SOL_API_KEY --value dev-internal-key
+# Each workload has its own ignored secret input. Keep the same key names
+# separate so the fixture exercises unit-scoped delivery.
+for unit in payments/charge_svc comms/notify_worker checkout/checkout_svc ops/heartbeat_fn; do
+  mkdir -p "sol/secrets.local/${unit%/*}"
+  cat >"sol/secrets.local/${unit}.env" <<'SECRETS'
+POSTGRES_URL=postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+SOL_API_KEY=dev-internal-key
+SECRETS
+done
 
 sol local deploy
 

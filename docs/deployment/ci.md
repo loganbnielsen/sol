@@ -97,10 +97,25 @@ Configure two GitHub environments (Settings -> Environments):
 The workflow holds no long-lived cloud credentials (`DEC-057`) and no workload secret
 values (`FEAT-053`). The only repository secret is `SCHEMA_REGISTRY_URL`, used by the
 schema-compatibility gate; the schema check reports "NOT CHECKED" when it is absent.
-Workload secret values are seeded out of band with:
+Workload values are supplied without placing them in argv or CI logs. For an
+automated Sol-owned key, pipe the secret source to:
 
 ```bash
-sol secret set --target <env>/<provider>/<region> <KEY>
+your-secret-tool get payment-api-key \
+  | sol secret set "$SOL_TARGET" payments/charge_svc/PAYMENT_API_KEY --from-stdin
 ```
 
-The deploy fails closed, naming any key that is missing.
+Migration Jobs use a target-scoped platform input. Provision it from the same
+secret authority without placing its value in a command argument:
+
+```bash
+your-secret-tool get production-postgres-url \
+  | sol secret set "$SOL_TARGET" @platform/POSTGRES_URL --from-stdin
+```
+
+This writes only the target's `sol-secrets` objects used by internal Jobs. It
+does not populate any application unit Secret.
+
+The target explicitly maps every required key to `sol` or `external`. M1
+refuses deployment when a key is externally owned because ESO delivery is not
+implemented yet.

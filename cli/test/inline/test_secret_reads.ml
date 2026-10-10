@@ -50,7 +50,15 @@ if [ "$verb" = "get" ]; then
       exit 0 ;;
     secret)
       if [ "$mode" = "present" ] || [ "$mode" = "listing-fails" ] || [ "$mode" = "workloads-fail" ]; then
-        echo '{"apiVersion":"v1","kind":"Secret","data":{"EXISTING":"ZXhpc3Rpbmc="}}'
+        echo '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"sol-secrets","namespace":"payments","resourceVersion":"1"},"data":{"EXISTING":"ZXhpc3Rpbmc="}}'
+        exit 0
+      fi
+      if [ "$mode" = "runtime-valid" ]; then
+        echo '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"sol-secrets","namespace":"payments","resourceVersion":"1"},"data":{"POSTGRES_URL":"cG9zdGdyZXM6Ly9kYiJ9"}}'
+        exit 0
+      fi
+      if [ "$mode" = "owned-unit" ]; then
+        echo '{"apiVersion":"v1","kind":"Secret","metadata":{"name":"charge-svc-secrets","namespace":"payments","resourceVersion":"1","labels":{"app.kubernetes.io/managed-by":"sol"}},"data":{"EXISTING":"ZXhpc3Rpbmc="}}'
         exit 0
       fi
       if [ "$mode" = "blank" ]; then
@@ -115,113 +123,6 @@ let with_fake_kubectl ~mode f =
 
 let ctx = Sol_cli_kube_destination.local_context
 let namespaces = [ "payments" ]
-
-let set () =
-  Sol_cli_secret.set
-    ~ctx
-    ~workspace:"demo"
-    ~namespaces
-    ~declared:[]
-    ~key:"NEW_KEY"
-    ~value:"v"
-;;
-
-let is_error = function
-  | Error _ -> true
-  | Ok _ -> false
-;;
-
-let test_set_refuses_an_unreadable_secret () =
-  with_fake_kubectl ~mode:"unreachable" (fun ~calls ~manifests:_ ->
-    Windtrap.equal Windtrap.bool ~msg:"set returns Error" true (is_error (set ()));
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"nothing is applied over a Secret that could not be read"
-      false
-      (Sol_cli_string.contains ~needle:"apply" (calls ())))
-;;
-
-let test_delete_refuses_an_unreadable_secret () =
-  with_fake_kubectl ~mode:"unreachable" (fun ~calls ~manifests:_ ->
-    let result =
-      Sol_cli_secret.delete ~ctx ~workspace:"demo" ~namespaces ~key:"LEAKED_KEY"
-    in
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"delete returns Error, not \"deleted\""
-      true
-      (is_error result);
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"no patch was sent"
-      false
-      (Sol_cli_string.contains ~needle:"patch" (calls ())))
-;;
-
-let test_list_refuses_an_unreadable_secret () =
-  with_fake_kubectl ~mode:"unreachable" (fun ~calls:_ ~manifests:_ ->
-    let result = Sol_cli_secret.list ~ctx ~workspace:"demo" ~namespaces in
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"list returns Error, not an empty key list"
-      true
-      (is_error result))
-;;
-
-let nothing_written calls =
-  not
-    (Sol_cli_string.contains ~needle:"apply" calls
-     || Sol_cli_string.contains ~needle:"patch" calls
-     || Sol_cli_string.contains ~needle:"rollout " calls)
-;;
-
-let test_later_read_failure_writes_nothing mode () =
-  with_fake_kubectl ~mode (fun ~calls ~manifests:_ ->
-    Windtrap.equal Windtrap.bool ~msg:"set returns Error" true (is_error (set ()));
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"set wrote and restarted nothing"
-      true
-      (nothing_written (calls ()));
-    let deleted =
-      Sol_cli_secret.delete ~ctx ~workspace:"demo" ~namespaces ~key:"EXISTING"
-    in
-    Windtrap.equal Windtrap.bool ~msg:"delete returns Error" true (is_error deleted);
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"delete patched and restarted nothing"
-      true
-      (nothing_written (calls ())))
-;;
-
-let test_set_creates_a_secret_that_is_absent () =
-  with_fake_kubectl ~mode:"missing" (fun ~calls:_ ~manifests ->
-    Windtrap.equal Windtrap.bool ~msg:"set succeeds on NotFound" false (is_error (set ()));
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"the new key is applied"
-      true
-      (Sol_cli_string.contains ~needle:"NEW_KEY" (manifests ())))
-;;
-
-let test_set_keeps_the_existing_keys () =
-  with_fake_kubectl ~mode:"present" (fun ~calls:_ ~manifests ->
-    Windtrap.equal Windtrap.bool ~msg:"set succeeds" false (is_error (set ()));
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"the applied manifest still carries the key it read"
-      true
-      (Sol_cli_string.contains ~needle:"EXISTING" (manifests ())))
-;;
-
-let test_absent_rollout_kind_is_an_empty_listing () =
-  with_fake_kubectl ~mode:"no-rollouts" (fun ~calls:_ ~manifests:_ ->
-    Windtrap.equal
-      Windtrap.bool
-      ~msg:"a cluster without the Rollouts CRD still rotates"
-      false
-      (is_error (set ())))
-;;
 
 let verify ?(secret_name = "charge-svc-secrets") ?(required_keys = [ "EXISTING" ]) mode =
   with_fake_kubectl ~mode (fun ~calls:_ ~manifests:_ ->
@@ -301,12 +202,105 @@ let test_verify_runtime_secret_reads_the_substrate_secret () =
       (Sol_cli_string.contains ~needle:"POSTGRES_URL" message)
 ;;
 
-let%test "unreadable is not absent: set" = test_set_refuses_an_unreadable_secret ()
-let%test "unreadable is not absent: delete" = test_delete_refuses_an_unreadable_secret ()
-let%test "unreadable is not absent: list" = test_list_refuses_an_unreadable_secret ()
+let test_platform_set_writes_only_the_runtime_secret () =
+  with_fake_kubectl ~mode:"present" (fun ~calls:_ ~manifests ->
+    match
+      Sol_cli_secret.set_platform_key
+        ~ctx
+        ~namespaces:[ "payments"; "orders" ]
+        ~key:"POSTGRES_URL"
+        ~value:"postgres://platform-db"
+    with
+    | Error message -> Windtrap.failf "platform secret set failed: %s" message
+    | Ok _ ->
+      let manifests = manifests () in
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the platform Secret is written"
+        true
+        (Sol_cli_string.contains ~needle:"name: sol-secrets" manifests);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"application Secrets are not written"
+        false
+        (Sol_cli_string.contains ~needle:"charge-svc-secrets" manifests))
+;;
 
-let%test "unreadable is not absent: workload Secret listing fails" =
-  (test_later_read_failure_writes_nothing "listing-fails") ()
+let test_unit_set_writes_only_its_unit_secret () =
+  with_fake_kubectl ~mode:"owned-unit" (fun ~calls:_ ~manifests ->
+    match
+      Sol_cli_secret.set_unit_key
+        ~ctx
+        ~namespace:"payments"
+        ~secret_name:"charge-svc-secrets"
+        ~key:"API_TOKEN"
+        ~value:"unit-only"
+    with
+    | Error message -> Windtrap.failf "unit secret set failed: %s" message
+    | Ok _ ->
+      let manifests = manifests () in
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the selected unit Secret is written"
+        true
+        (Sol_cli_string.contains ~needle:"name: charge-svc-secrets" manifests);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the platform Secret is not written"
+        false
+        (Sol_cli_string.contains ~needle:"name: sol-secrets" manifests))
+;;
+
+let test_platform_readiness_requires_only_the_database_job_input () =
+  match
+    with_fake_kubectl ~mode:"runtime-valid" (fun ~calls:_ ~manifests:_ ->
+      Sol_cli_secret.verify_runtime_secret ~ctx ~namespace:"payments")
+  with
+  | Ok () -> ()
+  | Error message -> Windtrap.failf "valid platform Job input was rejected: %s" message
+;;
+
+let test_contract_readiness_names_missing_tls_job_input () =
+  match
+    with_fake_kubectl ~mode:"runtime-valid" (fun ~calls:_ ~manifests:_ ->
+      Sol_cli_secret.verify_runtime_secret_keys
+        ~ctx
+        ~namespace:"payments"
+        ~required_keys:[ "KAFKA_SASL_PASSWORD"; "KAFKA_SSL_CA_CERT" ])
+  with
+  | Ok () ->
+    Windtrap.fail "a runtime Secret without Kafka inputs passed contract readiness"
+  | Error message ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"names both missing TLS inputs"
+      true
+      (Sol_cli_string.contains ~needle:"KAFKA_SASL_PASSWORD" message
+       && Sol_cli_string.contains ~needle:"KAFKA_SSL_CA_CERT" message)
+;;
+
+let test_tls_contract_job_refuses_before_submission_without_platform_inputs () =
+  with_fake_kubectl ~mode:"missing" (fun ~calls ~manifests:_ ->
+    match
+      Sol_cli_contract.reconcile_in_destination
+        ~ctx
+        ~platform_shape:Sol_cli_profile.Durable
+        ~namespace:"payments"
+        ~image:"contract-image"
+    with
+    | Ok () -> Windtrap.fail "TLS contract Job started without platform Kafka inputs"
+    | Error message ->
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"names the required Kafka platform values"
+        true
+        (Sol_cli_string.contains ~needle:"KAFKA_SASL_PASSWORD" message
+         && Sol_cli_string.contains ~needle:"KAFKA_SSL_CA_CERT" message);
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"does not submit a Job before the values are verified"
+        false
+        (Sol_cli_string.contains ~needle:"apply" (calls ())))
 ;;
 
 let%test "verify: present required keys pass" =
@@ -321,18 +315,22 @@ let%test "verify: runtime Secret check reads the substrate Secret" =
   test_verify_runtime_secret_reads_the_substrate_secret ()
 ;;
 
-let%test "unreadable is not absent: Deployment listing fails" =
-  (test_later_read_failure_writes_nothing "workloads-fail") ()
+let%test "scope: platform writes only the shared Job Secret" =
+  test_platform_set_writes_only_the_runtime_secret ()
 ;;
 
-let%test "absent and present still work: absent -> create" =
-  test_set_creates_a_secret_that_is_absent ()
+let%test "scope: unit writes only the selected unit Secret" =
+  test_unit_set_writes_only_its_unit_secret ()
 ;;
 
-let%test "absent and present still work: present -> keys kept" =
-  test_set_keeps_the_existing_keys ()
+let%test "verify: platform readiness checks the database Job input" =
+  test_platform_readiness_requires_only_the_database_job_input ()
 ;;
 
-let%test "absent and present still work: no Rollout CRD" =
-  test_absent_rollout_kind_is_an_empty_listing ()
+let%test "verify: TLS contract readiness checks both Kafka Job inputs" =
+  test_contract_readiness_names_missing_tls_job_input ()
+;;
+
+let%test "verify: TLS contract Job requires platform inputs before submit" =
+  test_tls_contract_job_refuses_before_submission_without_platform_inputs ()
 ;;

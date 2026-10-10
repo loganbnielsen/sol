@@ -252,6 +252,7 @@ let deploy_service
       ~ctx_dir
       ~sha
       ~release_id
+      ~restart_secret
       (spec : Sol_cli_deployment_plan.service_spec)
   =
   let exec = Sol_cli_up_execution.service_execution ~workspace ~ctx_dir ~sha spec in
@@ -267,6 +268,25 @@ let deploy_service
       ~release_id
       ~dry_run:false
       spec
+  in
+  let* () =
+    match restart_secret, spec.primitive with
+    | true, (Sol_cli_deployment_plan.Svc | Sol_cli_deployment_plan.Worker) ->
+      let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
+      let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
+      Sol_cli_kubectl.rollout_restart
+        ~ctx:Sol_cli_kube_destination.local_context
+        ~kind:("deployment/" ^ name)
+        ~namespace
+      |> Result.map ignore
+      |> Result.map_error (fun error ->
+        Printf.sprintf
+          "local secret values were applied for %s/%s, but the workload restart failed: \
+           %s"
+          namespace
+          name
+          (Sol_cli_process.error_to_string error))
+    | _ -> Ok ()
   in
   let* () =
     match spec.primitive with
@@ -344,8 +364,8 @@ let expose_service
     Printf.printf "\n%!"
 ;;
 
-let apply_service ~workspace ~ctx_dir ~sha ~pf_failed ~release_id spec =
-  let* exec = deploy_service ~workspace ~ctx_dir ~sha ~release_id spec in
+let apply_service ~workspace ~ctx_dir ~sha ~pf_failed ~release_id ~restart_secret spec =
+  let* exec = deploy_service ~workspace ~ctx_dir ~sha ~release_id ~restart_secret spec in
   expose_service ~pf_failed spec exec;
   Ok ()
 ;;
@@ -361,6 +381,84 @@ let cluster = Sol_cli_kube_destination.local_context
 
 let observed_contract ~workspace =
   Sol_cli_release_store.deployed_contract ~ctx:cluster ~workspace
+;;
+
+let load_local_secret_values ~root ~facts services =
+  services
+  |> Sol_cli_result.map_list (fun (service : Sol_cli_manifest.service) ->
+    let unit_address = service.domain ^ "/" ^ service.name in
+    let* workload =
+      match
+        List.find_opt
+          (fun (workload : Sol_cli_workspace_model.workload) ->
+             String.equal workload.service.domain service.domain
+             && String.equal workload.service.name service.name)
+          facts.Sol_cli_workspace_model.workloads
+      with
+      | None -> Error (service.name ^ " is not part of the loaded workspace")
+      | Some workload -> Ok workload
+    in
+    let* secret_keys =
+      match workload.config with
+      | Ok config -> Ok config.Sol_cli_toml.secret_keys
+      | Error error -> Error (Sol_cli_toml.parse_error_to_string error)
+    in
+    let required = Sol_cli_manifest.required_secret_keys secret_keys in
+    let* values =
+      Sol_cli_local_secret_input.load ~root ~unit_address
+      |> Result.map_error (fun error -> service.name ^ ": " ^ error)
+    in
+    let missing =
+      required
+      |> List.filter (fun key ->
+        match List.assoc_opt key values with
+        | Some value when String.trim value <> "" -> false
+        | _ -> true)
+      |> List.sort_uniq String.compare
+    in
+    match missing with
+    | [] -> Ok (unit_address, List.filter (fun (key, _) -> List.mem key required) values)
+    | _ ->
+      Error
+        (Printf.sprintf
+           "%s is missing local secret value(s): %s. Add them to \
+            sol/secrets.local/%s.env."
+           unit_address
+           (String.concat ", " missing)
+           unit_address))
+  |> Sol_cli_exit.of_msg
+;;
+
+let apply_local_secret_values ~secret_values (plan : Sol_cli_deployment_plan.t) =
+  plan.services
+  |> List.fold_left
+       (fun acc (spec : Sol_cli_deployment_plan.service_spec) ->
+          let* changed_units = acc in
+          let unit_address = spec.domain ^ "/" ^ spec.source_name in
+          let required =
+            Sol_cli_manifest.required_secret_keys
+              ~transport:(Sol_cli_manifest.kafka_transport_of_config spec.config)
+              (List.map fst spec.secrets)
+          in
+          let values =
+            Option.value ~default:[] (List.assoc_opt unit_address secret_values)
+            |> List.filter (fun (key, _) -> List.mem key required)
+          in
+          let secret_name =
+            Sol_cli_manifest.workload_secret_name
+              (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name)
+          in
+          let* changed =
+            Sol_cli_secret.apply_unit_values
+              ~ctx:cluster
+              ~namespace:(Sol_cli_deployment_plan.namespace_to_string spec.namespace)
+              ~secret_name
+              values
+            |> Result.map_error (fun error ->
+              Printf.sprintf "could not write local values for %s: %s" unit_address error)
+          in
+          Ok (if changed then unit_address :: changed_units else changed_units))
+       (Ok [])
 ;;
 
 let prepare_plan
@@ -425,8 +523,10 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~serv
          (Ok ()))
 ;;
 
-let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
+let apply_plan ~secret_values ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
   Sol_cli_run_log.run_task run_log ~name:"apply" (fun () ->
+    let* () = Sol_cli_boundary_lease.ensure_held lease in
+    let* changed_units = apply_local_secret_values ~secret_values plan in
     let* () =
       Sol_cli_local_platform.with_schema_registry_endpoint (fun ~url ->
         Sol_cli_contract.report
@@ -445,6 +545,8 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
               ~ctx_dir:repo_root
               ~sha
               ~pf_failed
+              ~restart_secret:
+                (List.mem (spec.domain ^ "/" ^ spec.source_name) changed_units)
               ~release_id:
                 (Sol_cli_deployment_plan.workload_release_id
                    ~workspace:plan.Sol_cli_deployment_plan.workspace
@@ -504,6 +606,7 @@ let run_apply
       ~repo_root
       ~confirm_group_change
       ~keep_releases
+      ~secret_values
   =
   let* () = check_contract ~facts ~services in
   ensure_postgres_url ();
@@ -532,7 +635,15 @@ let run_apply
       ~gates:(fun _ -> Ok ())
       ~before_apply:(fun _ -> Ok ())
       ~apply:(fun ~lease ~release_id:_ plan ->
-        apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan
+        apply_plan
+          ~secret_values
+          ~run_log
+          ~workspace
+          ~sha
+          ~repo_root
+          ~pf_failed
+          ~lease
+          plan
         |> Result.map (fun () -> []))
       ~report_success:(fun plan _ -> report_apply_success ~workspace ~facts plan)
       ~push_events:(fun ~release_id:_ _ -> ())
@@ -559,6 +670,11 @@ let run (req : Sol_cli_command_request.local_deploy_request) =
       inventory
     |> Sol_cli_exit.of_msg
   in
+  let* secret_values =
+    match req.mode with
+    | Sol_cli_command_request.Dry_run -> Ok []
+    | Apply -> load_local_secret_values ~root:repo_root ~facts services
+  in
   let* () =
     match req.mode with
     | Sol_cli_command_request.Dry_run -> Ok ()
@@ -584,6 +700,7 @@ let run (req : Sol_cli_command_request.local_deploy_request) =
       ~repo_root
       ~confirm_group_change:req.confirm_group_change
       ~keep_releases:req.keep_releases
+      ~secret_values
 ;;
 
 let scope_arg =

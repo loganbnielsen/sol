@@ -320,21 +320,33 @@ Two operator steps make the transport usable, and both fail closed:
    supplied out of band: Sol never reads it, and it never enters Terraform
    state, a command line, a release artifact or a run log.
 
-2. **Give every workload namespace the credential and the CA.** `sol secret set`
-   writes the key to the runtime Secret and to every `<service>-secrets` in the
-   target's namespaces, creating them if needed:
+2. **Provide platform Job inputs separately from application values.** Migration
+   Jobs read `POSTGRES_URL` from the target's `sol-secrets` objects. For a TLS
+   profile, contract Jobs also read the Kafka password and CA there:
 
    ```bash
-   sol secret set KAFKA_SASL_PASSWORD --value "$(your-secret-tool get sol-kafka-sasl-password)" \
-     --target prod/aws/us-east-1
+   your-secret-tool get production-postgres-url \
+     | sol secret set prod/aws/us-east-1 @platform/POSTGRES_URL --from-stdin
+   your-secret-tool get sol-kafka-sasl-password \
+     | sol secret set prod/aws/us-east-1 @platform/KAFKA_SASL_PASSWORD --from-stdin
    kubectl get secret redpanda-default-cert -n redpanda \
      -o jsonpath='{.data.ca\.crt}' | base64 -d > ca.crt
-   sol secret set KAFKA_SSL_CA_CERT --value "$(cat ca.crt)" --target prod/aws/us-east-1
+   sol secret set prod/aws/us-east-1 @platform/KAFKA_SSL_CA_CERT --from-file ca.crt
    ```
 
-   The CA is mounted from the workload Secret at `/etc/sol/kafka/ca.crt` and the
-   workload reads it through `KAFKA_SSL_CA_LOCATION`; the SASL user Sol renders
-   is `sol-workloads`, so the broker user and the username must agree.
+   These platform writes do not populate application Secrets. Set application
+   values independently for each declared unit, for example:
+
+   ```bash
+   your-secret-tool get sol-kafka-sasl-password \
+     | sol secret set prod/aws/us-east-1 payments/charge_svc/KAFKA_SASL_PASSWORD --from-stdin
+   sol secret set prod/aws/us-east-1 payments/charge_svc/KAFKA_SSL_CA_CERT --from-file ca.crt
+   ```
+
+   Repeat the unit-scoped writes for each unit that declares those keys. The CA
+   is mounted from that unit's Secret at `/etc/sol/kafka/ca.crt`; the workload
+   reads it through `KAFKA_SSL_CA_LOCATION`. The SASL user Sol renders is
+   `sol-workloads`, so the broker user and the username must agree.
 
 An ordinary `sol deploy` verifies every required key is present and non-empty
 before it applies a workload, so a production target never rolls out a workload

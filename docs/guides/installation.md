@@ -90,12 +90,16 @@ generates:
 sol new workspace demo
 cd demo
 
-# The first run establishes the local cluster and its infrastructure, then stops
-# until the workspace's secrets exist; a deploy only verifies them.
-sol local deploy
-sol local secret set POSTGRES_URL \
-  --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
-sol local secret set SOL_API_KEY --value dev-internal-key
+# Local secret inputs are ignored and scoped to each workload.
+mkdir -p sol/secrets.local/payments sol/secrets.local/comms
+cat > sol/secrets.local/payments/charge_svc.env <<'SECRETS'
+POSTGRES_URL=postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+SOL_API_KEY=dev-internal-key
+SECRETS
+cat > sol/secrets.local/comms/notify_worker.env <<'SECRETS'
+POSTGRES_URL=postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
+SOL_API_KEY=dev-internal-key
+SECRETS
 
 sol local deploy
 curl localhost:8080/health

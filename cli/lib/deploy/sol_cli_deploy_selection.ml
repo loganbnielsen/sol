@@ -28,6 +28,63 @@ type deployed =
 
 let unit_id (s : Sol_cli_manifest.service) = Printf.sprintf "%s/%s" s.domain s.name
 
+let secret_authorities_for_plan ~config plan =
+  let missing = ref [] in
+  let mappings = ref [] in
+  List.iter
+    (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+       let unit_address = spec.domain ^ "/" ^ spec.source_name in
+       let transport = Sol_cli_manifest.kafka_transport_of_config spec.config in
+       let required =
+         Sol_cli_manifest.required_secret_keys ~transport (List.map fst spec.secrets)
+       in
+       let resolution =
+         Sol_cli_config.resolve_secret_authorities
+           config.Sol_cli_config.target
+           ~unit_address
+           ~required_keys:required
+       in
+       List.iter
+         (fun key -> missing := (unit_address, key) :: !missing)
+         resolution.missing;
+       List.iter
+         (fun (key, authority) -> mappings := (unit_address, key, authority) :: !mappings)
+         resolution.resolved)
+    plan.Sol_cli_deployment_plan.services;
+  match List.rev !missing with
+  | (unit_address, key) :: _ ->
+    Error
+      (Printf.sprintf
+         "target %s has no secret authority for %s/%s; declare it under \
+          targets.<provider>/<region>.secrets in sol/environments.yml"
+         config.Sol_cli_config.target.name
+         unit_address
+         key)
+  | [] -> Ok (List.rev !mappings)
+;;
+
+let refuse_external_delivery ~config plan =
+  let* mappings = secret_authorities_for_plan ~config plan in
+  let external_keys =
+    List.filter_map
+      (fun (unit_address, key, authority) ->
+         match authority with
+         | Sol_cli_config.Sol_managed -> None
+         | External _ -> Some (unit_address, key))
+      mappings
+  in
+  match external_keys with
+  | [] -> Ok ()
+  | (unit_address, key) :: _ ->
+    Error
+      (Printf.sprintf
+         "Cannot deploy %s.\n\n\
+          %s is externally managed, but external secret delivery is not yet supported by \
+          this deployment path. No legacy backend or placeholder will be used."
+         config.Sol_cli_config.target.name
+         (unit_address ^ "/" ^ key))
+;;
+
 let apply_target ~target ~(config : Sol_cli_config.t) selection =
   let* () =
     if Sol_cli_config.target_declared config.target
@@ -178,6 +235,7 @@ let plan (input : Planning_input.t) =
       services
     |> refused
   in
+  let* _secret_mappings = secret_authorities_for_plan ~config plan |> refused in
   let apply_mode =
     match emit_to with
     | Some _ -> Sol_cli_release.Gitops

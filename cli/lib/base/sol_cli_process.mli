@@ -2,6 +2,7 @@ type cmd =
   { argv : string list
   ; cwd : string option
   ; env : (string * string) list option
+  ; inherit_env : bool
   ; timeout_s : float option
   ; redact : string list
   }
@@ -25,6 +26,7 @@ type error =
 val cmd
   :  ?cwd:string
   -> ?env:(string * string) list
+  -> ?inherit_env:bool
   -> ?timeout_s:float
   -> ?redact:string list
   -> string list

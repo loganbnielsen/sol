@@ -1,3 +1,5 @@
+open Result.Syntax
+
 let projection_dir ~workspace = Filename.concat workspace "contract"
 let entry_point ~workspace = Filename.concat (projection_dir ~workspace) "run"
 let has_projection ~workspace = Sys.file_exists (entry_point ~workspace)
@@ -101,6 +103,15 @@ let reconciliation_images services =
 
 let reconcile_in_destination ~ctx ~platform_shape ~namespace ~image =
   let transport = Sol_cli_manifest.kafka_transport platform_shape in
+  let* () =
+    match transport with
+    | Sol_cli_manifest.Plaintext -> Ok ()
+    | Sol_cli_manifest.Sasl_ssl ->
+      Sol_cli_secret.verify_runtime_secret_keys
+        ~ctx
+        ~namespace
+        ~required_keys:[ "KAFKA_SASL_PASSWORD"; "KAFKA_SSL_CA_CERT" ]
+  in
   match
     Sol_cli_migration_job.submit_doc
       ~ctx
