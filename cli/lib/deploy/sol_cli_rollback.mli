@@ -149,6 +149,30 @@ val prune_workloads
   -> surplus:(workload_identity * string) list
   -> (prune_report, string) result
 
+val external_secret_of_spec
+  :  Sol_cli_deployment_plan.service_spec
+  -> Sol_cli_workload_ownership.identity option
+
+val declared_external_secrets
+  :  Sol_cli_deployment_plan.t
+  -> Sol_cli_workload_ownership.identity list
+
+type external_secret_prune_report =
+  { removed_external_secrets : prune_target list
+  ; unowned_external_secrets : (prune_target * unowned_reason) list
+  }
+
+val orphaned_external_secret_evidence
+  :  evidence:Sol_cli_release_id.owned_object list
+  -> declared:Sol_cli_workload_ownership.identity list
+  -> Sol_cli_release_id.owned_object list
+
+val prune_external_secrets
+  :  ctx:Sol_cli_kube_destination.context
+  -> evidence:Sol_cli_release_id.owned_object list
+  -> declared:Sol_cli_workload_ownership.identity list
+  -> (external_secret_prune_report, string) result
+
 type pointer_report =
   | Pointer_confirmed
   | Pointer_names of string

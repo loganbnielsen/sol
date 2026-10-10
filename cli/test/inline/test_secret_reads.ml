@@ -815,3 +815,51 @@ let%test "external Secret readiness warns when no synced version is published" =
 let%test "external Secret readiness warns when the generation lags" =
   test_external_secret_readiness_warns_when_the_generation_lags ()
 ;;
+
+(* The rollback path renders and applies the same bundle as a deploy: a release whose
+   workload carries external refs must render its ExternalSecret into prerequisites, and
+   [apply_workload_phased] must apply that ExternalSecret before the workload. This is the
+   cross-PR invariant from #1342 exercised on the rollback path, so a future change that
+   moved the ES out of prerequisites would break a rollback here. *)
+let test_rollback_renders_and_applies_the_external_secret_first () =
+  let spec = external_workload_spec () in
+  let release_id =
+    match Sol_cli_release_id.of_string "r-0123456789abcdef" with
+    | Ok release_id -> release_id
+    | Error message -> Windtrap.failf "invalid test release id: %s" message
+  in
+  let bundle =
+    match Sol_cli_deployment_render.render_spec ~workspace:"myapp" ~release_id spec with
+    | Ok bundle -> bundle
+    | Error message -> Windtrap.failf "rollback render failed: %s" message
+  in
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a rollback renders the ExternalSecret as a prerequisite"
+    true
+    (Sol_cli_string.contains ~needle:"kind: ExternalSecret" bundle.prerequisites_yaml);
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"a rollback does not put the ExternalSecret in the workload"
+    false
+    (Sol_cli_string.contains ~needle:"kind: ExternalSecret" bundle.workload_yaml);
+  with_fake_kubectl ~mode:"phased-eso-ready" (fun ~calls:_ ~manifests ->
+    match Sol_cli_executor.apply_workload_phased ~ctx ~spec ~bundle () with
+    | Error message -> Windtrap.failf "rollback apply failed: %s" message
+    | Ok () ->
+      let applied = manifests () in
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"a rollback applies the ExternalSecret before the workload"
+        true
+        (match
+           ( index_of_substring applied "kind: ExternalSecret"
+           , index_of_substring applied "kind: Deployment" )
+         with
+         | Some external_secret_at, Some workload_at -> external_secret_at < workload_at
+         | _ -> false))
+;;
+
+let%test "rollback: the ExternalSecret is a prerequisite applied before the workload" =
+  test_rollback_renders_and_applies_the_external_secret_first ()
+;;
