@@ -57,6 +57,10 @@ CASES = [
         "cli/lib/kube/sol_cli_rollout_diagnosis.ml",
         '[ "get"; "pods"; "-n"; ns; "-l"',
         '[ "get"; "configmaps"; "-n"; ns; "-l"')),
+    ("a missing Kubernetes permission required for rollout failure diagnosis", replace(
+        ROLE,
+        POD_RESOURCES,
+        '    resources  = ["pods", "pods/log", "services"]')),
     ("an ARN that never reaches the provider root", replace(
         "cli/lib/cloud/sol_cli_provider_capabilities.ml", '(Sol_cli_config.provider_field target "operator_role_arn")', "None")),
     ("an operator RoleBinding the substrate identity cannot bind", replace(

@@ -121,7 +121,15 @@ def main():
     readers = [
         root / "cli/lib/kube/sol_cli_rollout_diagnosis.ml",
     ]
-    reads = sorted({m for f in readers for m in re.findall(r'"get"; "([a-z/]+)"', f.read_text())})
+    reads = {m for f in readers for m in re.findall(r'"get"; "([a-z/]+)"', f.read_text())}
+    required_diagnosis_reads = {"pods", "events", "cronjob"}
+    missing_reads = required_diagnosis_reads - reads
+    if missing_reads:
+        fail(
+            "rollout failure diagnosis no longer reads required Kubernetes resources: "
+            + ", ".join(sorted(missing_reads))
+        )
+    reads = sorted(reads)
     for resource in reads:
         api = CANONICAL.get(resource, resource)
         if api not in granted:

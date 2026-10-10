@@ -19,9 +19,10 @@ The narrative of what each command does in a deployment belongs to
 ## Addressing
 
 Remote lifecycle commands take an explicit target (`<env>/<provider>/<region>`).
-Local development commands use the `sol local` group or `sol up`, depending on
-whether they operate on the local Kubernetes cluster or run services as native
-processes. There is no ambient current remote target.
+Local development has three distinct workflows: `sol local …` manages the
+local cluster, `sol up` builds images and deploys them to that cluster, and
+`sol local run` runs workspace services as native processes. There is no
+ambient current remote target.
 
 ## Exit behaviour
 
