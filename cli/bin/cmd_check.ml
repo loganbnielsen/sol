@@ -4,7 +4,8 @@ open Result.Syntax
 let fail message = Sol_cli_exit.failure ~code:2 ("sol check: " ^ message)
 
 let findings_for ~facts = function
-  | None -> Ok (Sol_cli_check.run ~facts)
+  | None ->
+    Ok (Sol_cli_check.run ~facts @ Sol_cli_check.generated_contract_findings ~facts)
   | Some requested ->
     let* selected =
       Sol_cli_workload_selection.resolve
@@ -15,7 +16,8 @@ let findings_for ~facts = function
     in
     Ok
       (Sol_cli_check.run_services ~facts selected.services
-       @ Sol_cli_check.declaration_findings_in_scope ~facts selected.request)
+       @ Sol_cli_check.declaration_findings_in_scope ~facts selected.request
+       @ Sol_cli_check.generated_contract_findings ~facts)
 ;;
 
 type outcome =
@@ -59,7 +61,8 @@ let scope_arg =
         ~doc:
           "Check one domain (`payments`) or one unit (`payments/charge_svc`). A name \
            that matches nothing fails closed and says what does, rather than selecting \
-           nothing and reporting success.")
+           nothing and reporting success. Generated contract freshness is always checked \
+           workspace-wide.")
 ;;
 
 let cmd =

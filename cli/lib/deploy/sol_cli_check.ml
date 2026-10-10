@@ -106,6 +106,23 @@ let declaration_findings ~facts =
   |> List.map finding_of_declaration_issue
 ;;
 
+let generated_contract_findings ~facts =
+  match Sol_cli_contract_gen.check_freshness ~root:facts.Sol_cli_workspace_model.root with
+  | Ok issues ->
+    List.map
+      (fun issue ->
+         let path, message =
+           match issue with
+           | Sol_cli_contract_gen.Stale path ->
+             path, "generated binding is stale; run `sol contract generate`"
+           | Missing path ->
+             path, "generated binding is missing; run `sol contract generate`"
+         in
+         { severity = Severity.Error; path; message })
+      issues
+  | Error message -> [ { severity = Severity.Error; path = "contracts"; message } ]
+;;
+
 let declaration_findings_in_scope ~facts (request : Sol_cli_deployment_scope.request) =
   let in_scope (issue : Sol_cli_workspace_model.declaration_issue) =
     let same_name = Sol_cli_deployment_scope.equal_name in

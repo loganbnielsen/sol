@@ -369,11 +369,14 @@ let test_scoped_check_reports_declaration_issues_in_domain () =
       (List.length payments))
 ;;
 
-let run_sol ~root args =
+let run_sol ?(path = Sys.getenv "PATH") ~root args =
   let stdout_path = Filename.concat root "stdout" in
   let stderr_path = Filename.concat root "stderr" in
   let command =
-    String.concat " " (List.map Filename.quote (Cli_binary.path () :: args))
+    "PATH="
+    ^ Filename.quote path
+    ^ " "
+    ^ String.concat " " (List.map Filename.quote (Cli_binary.path () :: args))
     ^ " > "
     ^ Filename.quote stdout_path
     ^ " 2> "
@@ -402,6 +405,55 @@ let with_subprocess_workspace f =
        f root)
 ;;
 
+let with_contract_subprocess_workspace f =
+  let root = Filename.temp_dir "sol-check-contract-" "" in
+  Fun.protect
+    ~finally:(fun () -> ignore (Sol_cli_fs.remove_tree root))
+    (fun () ->
+       let write rel body =
+         let path = Filename.concat root rel in
+         Result.get_ok (Sol_cli_fs.mkdir_p (Filename.dirname path));
+         Result.get_ok (Sol_cli_fs.write_atomic path body)
+       in
+       write
+         "sol.yml"
+         "services:\n\
+         \  charge_svc:\n\
+         \    type: http\n\
+         \    path: app/payments/charge_svc\n\
+         \    language: ocaml\n\
+         \  notify_worker:\n\
+         \    type: worker\n\
+         \    path: app/comms/notify_worker\n\
+         \    language: typescript\n";
+       write "app/payments/charge_svc/Dockerfile" "FROM scratch\n";
+       write "app/payments/charge_svc/sol.toml" "";
+       write "app/comms/notify_worker/Dockerfile" "FROM scratch\n";
+       write "app/comms/notify_worker/sol.toml" "";
+       write
+         "events/payments/sol.toml"
+         "[contract]\n\
+          language = \"ocaml\"\n\n\
+          [[events]]\n\
+          name = \"Charged\"\n\
+          topic = \"payments.charges\"\n\
+          partitions = 3\n\
+          schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n";
+       write
+         "events/comms/sol.toml"
+         "[contract]\n\
+          language = \"typescript\"\n\n\
+          [[events]]\n\
+          name = \"Notified\"\n\
+          topic = \"comms.notifications\"\n\
+          partitions = 3\n\
+          schema = '{\"type\":\"object\",\"properties\":{\"id\":{\"type\":\"string\"}}}'\n";
+       (match Sol_cli_contract_gen.generate ~root ~check:false with
+        | Ok _ -> ()
+        | Error error -> Windtrap.fail ("could not prepare contract fixture: " ^ error));
+       f root)
+;;
+
 let test_failed_check_exits_two () =
   with_subprocess_workspace (fun root ->
     let unit = Filename.concat root "app/payments/charge_svc" in
@@ -414,6 +466,110 @@ let test_failed_check_exits_two () =
       ~msg:"and still names the failure"
       true
       (Sol_cli_string.contains ~needle:"Dockerfile is missing" stderr))
+;;
+
+let test_check_accepts_current_ocaml_and_typescript_projections () =
+  with_contract_subprocess_workspace (fun root ->
+    let code, stdout, stderr = run_sol ~path:"/nonexistent" ~root [ "check" ] in
+    Windtrap.equal Windtrap.int ~msg:"check succeeds without infrastructure" 0 code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"success is reported"
+      true
+      (Sol_cli_string.contains ~needle:"sol check: ok" stdout);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"no stale projection error is printed"
+      false
+      (Sol_cli_string.contains ~needle:"is stale" stderr))
+;;
+
+let test_check_reports_stale_projection_without_writing () =
+  with_contract_subprocess_workspace (fun root ->
+    let generated = Filename.concat root "events/payments/payments_contract.ml" in
+    write generated "hand-edited\n";
+    let code, _stdout, stderr = run_sol ~root [ "check" ] in
+    Windtrap.equal Windtrap.int ~msg:"stale binding fails check" 2 code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"diagnostic identifies the generated path"
+      true
+      (Sol_cli_string.contains ~needle:"events/payments/payments_contract.ml" stderr);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"diagnostic gives the explicit repair command"
+      true
+      (Sol_cli_string.contains ~needle:"sol contract generate" stderr);
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"check does not rewrite stale output"
+      "hand-edited\n"
+      (In_channel.with_open_bin generated In_channel.input_all))
+;;
+
+let test_check_reports_missing_projection_without_writing () =
+  with_contract_subprocess_workspace (fun root ->
+    let generated = Filename.concat root "app/comms/contract/src/comms_contract.ts" in
+    Sys.remove generated;
+    let code, _stdout, stderr = run_sol ~root [ "check" ] in
+    Windtrap.equal Windtrap.int ~msg:"missing binding fails check" 2 code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"diagnostic identifies the missing path"
+      true
+      (Sol_cli_string.contains ~needle:"app/comms/contract/src/comms_contract.ts" stderr);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"diagnostic gives the explicit repair command"
+      true
+      (Sol_cli_string.contains ~needle:"sol contract generate" stderr);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"check does not create missing output"
+      false
+      (Sys.file_exists generated))
+;;
+
+let test_scoped_check_validates_workspace_generated_projections () =
+  with_contract_subprocess_workspace (fun root ->
+    let payments = Filename.concat root "events/payments/payments_contract.ml" in
+    let payments_current = In_channel.with_open_bin payments In_channel.input_all in
+    write payments "stale selected-domain projection\n";
+    let code, _stdout, stderr = run_sol ~root [ "check"; "--scope"; "payments" ] in
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"a stale projection in the selected domain fails scoped check"
+      2
+      code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the selected stale projection is identified"
+      true
+      (Sol_cli_string.contains ~needle:"payments_contract.ml" stderr);
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the scoped check does not rewrite it"
+      "stale selected-domain projection\n"
+      (In_channel.with_open_bin payments In_channel.input_all);
+    write payments payments_current;
+    let comms = Filename.concat root "app/comms/contract/src/comms_contract.ts" in
+    write comms "stale unrelated projection\n";
+    let code, _stdout, stderr = run_sol ~root [ "check"; "--scope"; "payments" ] in
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"an unrelated stale projection also fails scoped check"
+      2
+      code;
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the unrelated stale projection is identified"
+      true
+      (Sol_cli_string.contains ~needle:"comms_contract.ts" stderr);
+    Windtrap.equal
+      Windtrap.string
+      ~msg:"the workspace-wide scoped check does not rewrite unrelated output"
+      "stale unrelated projection\n"
+      (In_channel.with_open_bin comms In_channel.input_all))
 ;;
 
 let test_unreadable_workspace_exits_one () =
@@ -564,6 +720,23 @@ let%test "check: scoped declaration findings stay in their domain" =
 ;;
 
 let%test "check: a failed check exits 2" = test_failed_check_exits_two ()
+
+let%test "check: current OCaml and TypeScript projections pass" =
+  test_check_accepts_current_ocaml_and_typescript_projections ()
+;;
+
+let%test "check: stale generated projection fails without writing" =
+  test_check_reports_stale_projection_without_writing ()
+;;
+
+let%test "check: missing generated projection fails without writing" =
+  test_check_reports_missing_projection_without_writing ()
+;;
+
+let%test "check: scoped checks validate workspace generated projections" =
+  test_scoped_check_validates_workspace_generated_projections ()
+;;
+
 let%test "check: an unreadable workspace exits 1" = test_unreadable_workspace_exits_one ()
 
 let%test "plan: refuses an unimplemented declaration" =

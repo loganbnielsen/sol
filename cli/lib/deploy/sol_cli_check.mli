@@ -19,6 +19,7 @@ val run_services
   -> finding list
 
 val declaration_findings : facts:Sol_cli_workspace_model.t -> finding list
+val generated_contract_findings : facts:Sol_cli_workspace_model.t -> finding list
 
 val declaration_findings_in_scope
   :  facts:Sol_cli_workspace_model.t

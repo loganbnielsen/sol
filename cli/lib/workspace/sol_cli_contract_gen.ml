@@ -235,26 +235,40 @@ let plan ~root =
     Result.map (fun peer_files -> event_files @ peer_files) (peer_bindings ~root)
 ;;
 
-let generate ~root ~check =
+type projection_issue =
+  | Stale of string
+  | Missing of string
+
+let check_freshness ~root =
   match plan ~root with
   | Error error -> Error error
   | Ok files ->
-    if check
-    then (
-      let problems =
-        List.filter_map
-          (fun (path, content) ->
-             let full = Filename.concat root path in
-             match Sol_cli_fs.read_file_opt full with
-             | Some existing when String.equal existing content -> None
-             | Some _ ->
-               Some (Printf.sprintf "%s is stale; run `sol contract generate`" path)
-             | None ->
-               Some (Printf.sprintf "%s is missing; run `sol contract generate`" path))
-          files
-      in
-      if problems = [] then Ok [] else Error (String.concat "\n" problems))
-    else
+    files
+    |> List.filter_map (fun (path, content) ->
+      let full = Filename.concat root path in
+      match Sol_cli_fs.read_file_opt full with
+      | Some existing when String.equal existing content -> None
+      | Some _ -> Some (Stale path)
+      | None -> Some (Missing path))
+    |> Result.ok
+;;
+
+let projection_issue_to_string = function
+  | Stale path -> Printf.sprintf "%s is stale; run `sol contract generate`" path
+  | Missing path -> Printf.sprintf "%s is missing; run `sol contract generate`" path
+;;
+
+let generate ~root ~check =
+  if check
+  then (
+    match check_freshness ~root with
+    | Error error -> Error error
+    | Ok [] -> Ok []
+    | Ok issues -> Error (String.concat "\n" (List.map projection_issue_to_string issues)))
+  else (
+    match plan ~root with
+    | Error error -> Error error
+    | Ok files ->
       List.fold_left
         (fun acc (path, content) ->
            Result.bind acc (fun written ->
@@ -266,5 +280,5 @@ let generate ~root ~check =
                     Ok (path :: written)))))
         (Ok [])
         files
-      |> Result.map List.rev
+      |> Result.map List.rev)
 ;;

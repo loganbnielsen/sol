@@ -111,7 +111,7 @@ application code imports and never redeclares:
 
 ```bash
 sol contract generate          # writes both bindings
-sol contract generate --check  # what CI runs
+sol check                      # validates declarations and generated bindings in CI
 ```
 
 ### The scenario's current state

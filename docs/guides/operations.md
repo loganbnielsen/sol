@@ -126,10 +126,15 @@ sol check --scope payments      # one domain
 sol check --scope payments/checkout-svc
 ```
 
-`sol check` validates declarations **without Docker or Kubernetes**: the workspace
-manifest, every `sol.toml`, the Dockerfile each unit needs, the app/unit layout, that every
-service declared in `sol.yml` has the unit directory it names, and the declared contracts. It is
+`sol check` validates declarations and generated contract bindings **without Docker or
+Kubernetes**: the workspace manifest, every `sol.toml`, the Dockerfile each unit needs,
+the app/unit layout, that every service declared in `sol.yml` has the unit directory it
+names, the declared contracts, and whether generated OCaml/TypeScript projections match
+those declarations. It is
 the command to run before a deploy, in CI, or after a merge that touched declarations.
+Generated-projection freshness is always checked for the whole workspace, including
+when `--scope` selects a workload or domain. The scope limits workload and declaration
+findings; it does not hide stale generated bindings elsewhere in the workspace.
 
 Exit status is part of the interface (`DEC-031`'s exit vocabulary): **0** means the
 declaration is valid, **2** means it ran and the answer is *no* — a check failed, and the
@@ -137,7 +142,7 @@ findings name the unit and what is wrong — and **1** means it could not do the
 (not inside a workspace, unreadable file). A name in `--scope` that matches nothing fails
 closed and lists what does, rather than quietly checking nothing.
 
-`sol check` today covers declaration validity. Target/scope diagnostics — asking the
+`sol check` covers workspace and generated-projection validity. Target/scope diagnostics — asking the
 cluster and the provider about a deployed environment — are **Target** (`DEVELOPER_EXPERIENCE.md` §7).
 
 ## 6. Open the right UI

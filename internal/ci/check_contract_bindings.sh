@@ -17,7 +17,7 @@ for workspace in examples/pluto platform/shared/templates/workspace; do
     status=1
     continue
   fi
-  if ! (cd "$CHECKOUT/$workspace" && SOL_HOME="$ROOT" "$BIN" contract generate --check); then
+  if ! (cd "$CHECKOUT/$workspace" && SOL_HOME="$ROOT" "$BIN" check); then
     status=1
   fi
 done

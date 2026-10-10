@@ -231,9 +231,10 @@ let key t = Kafka_service.Contract.key_of_field key_field (encode t)
 
 The module still satisfies `Kafka_service.MESSAGE`, but the contract facts come
 from the declaration rather than from hand-written code, so there is nothing to keep
-in sync. `sol contract generate --check` fails in CI when a checked-in binding
-drifts from its declaration, and `sol plan` reads the declaration directly — it
-never parses or runs application code. Sol registers the schema with the schema
+in sync. `sol check` (including scoped checks) fails when a checked-in binding
+drifts from its declaration; `sol contract generate` is the explicit command for
+updating those projections. `sol plan` reads the declaration directly — it never parses or runs
+application code. Sol registers the schema with the schema
 registry during `sol up`/`sol deploy` before any workload moves, and a producer or
 consumer resolves it read-only at startup, so a producer cannot publish a message
 that breaks it and a runtime never rewrites the contract. `partitions` is the count
