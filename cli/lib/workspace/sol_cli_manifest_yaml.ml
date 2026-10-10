@@ -166,6 +166,15 @@ let configmap_doc ?(cluster_env = default_cluster_env) ?(extra_env = []) ~ns ~na
 let workload_secret_name name = Printf.sprintf "%s-secrets" name
 let external_secret_name name = Printf.sprintf "%s-external-secrets" name
 
+(* The single routing decision: which Secret object holds a declared key. Every
+   consumer must use it — the env [secretKeyRef] and the Kafka CA volume — or a key
+   declared external can be projected from one object and read from another. *)
+let secret_name_for_key ~name ~secret_sources key =
+  match List.assoc_opt key secret_sources with
+  | Some (External _) -> external_secret_name name
+  | Some Sol_managed | None -> workload_secret_name name
+;;
+
 let secret_doc
       ?(base_secrets = default_secrets)
       ?(extra_secrets = [])
@@ -231,11 +240,7 @@ let external_secret_doc ~secret_refs ~ns ~name =
 let secret_key_refs ~name ~secret_sources secret_keys =
   secret_keys
   |> List.map (fun key ->
-    let secret_name =
-      match List.assoc_opt key secret_sources with
-      | Some (External _) -> external_secret_name name
-      | Some Sol_managed | None -> workload_secret_name name
-    in
+    let secret_name = secret_name_for_key ~name ~secret_sources key in
     Y.map
       [ "name", Y.string key
       ; ( "valueFrom"
@@ -496,7 +501,9 @@ let pod_template
           [ "name", Y.string kafka_ca_volume
           ; ( "secret"
             , Y.map
-                [ "secretName", Y.string (workload_secret_name name)
+                [ ( "secretName"
+                  , Y.string
+                      (secret_name_for_key ~name ~secret_sources kafka_ca_secret_key) )
                 ; ( "items"
                   , Y.list
                       [ Y.map
@@ -920,7 +927,9 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
           [ "name", Y.string kafka_ca_volume
           ; ( "secret"
             , Y.map
-                [ "secretName", Y.string (workload_secret_name name)
+                [ ( "secretName"
+                  , Y.string
+                      (secret_name_for_key ~name ~secret_sources kafka_ca_secret_key) )
                 ; ( "items"
                   , Y.list
                       [ Y.map
