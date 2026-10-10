@@ -226,23 +226,19 @@ without `--emit-to`) Sol applies them via `kubectl apply`. In GitOps mode
 (`sol deploy --emit-to <dir>`) Sol writes them to a directory for Argo CD or
 Flux to apply.
 
-**Secret values in GitOps output:** Sol-owned application Secret resources are
-emitted with empty `stringData` values. A comment block above `stringData`
-lists every key that must be populated before the manifest is applied:
+**Secret values are never in the rendered output:** Sol does not emit a unit's
+Sol-managed Secret, in either direct apply or GitOps emission, and there is no
+placeholder Secret to populate. Create it before the workload with
+`sol secret set <TARGET> <domain>/<unit>/<KEY>`; the workload's environment
+references the key, and the deploy fails closed when the Secret or a declared key
+is missing rather than applying a workload that cannot start.
 
-```yaml
-kind: Secret
-# Populate these values before applying.
-# Use `sol secret set <TARGET> <domain>/<unit>/<KEY>` or your secrets manager.
-stringData:
-  POSTGRES_URL: ""
-```
-
-For direct deployments, use `sol secret set <TARGET> <domain>/<unit>/<KEY>` to
-write a Sol-owned value to one unit. Platform Job inputs use the reserved
+External authority keys are delivered by the External Secrets Operator. Sol
+renders a namespaced `ExternalSecret` into the bundle's prerequisites and applies
+the workload only after ESO reports it synced, verifying that the sync names the
+spec it applied (see the deployment guide). Platform Job inputs use the reserved
 `@platform/<KEY>` address and write only `sol-secrets`. Do not commit manifest
-files that contain real secret values. External authority declarations are
-validated, but deployment is refused until their delivery path is implemented.
+files that contain real secret values.
 
 No per-service manifest hand-editing is required or expected. If a generated
 manifest does not fit your needs, open an issue or add a `sol.toml` escape
