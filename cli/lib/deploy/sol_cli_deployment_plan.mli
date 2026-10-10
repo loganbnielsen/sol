@@ -54,7 +54,7 @@ type service_spec =
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
-  ; secret_sources : (string * Sol_cli_manifest.secret_source) list
+  ; secret_sources : (string * Sol_cli_secret_source.t) list
   ; build_secret_keys : string list
   ; volumes : Sol_cli_toml.volume list
   ; schedule : string option

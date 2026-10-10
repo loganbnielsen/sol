@@ -6,7 +6,7 @@ type common_fields =
   ; spec_image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
-  ; secret_sources : (string * Sol_cli_manifest.secret_source) list
+  ; secret_sources : (string * Sol_cli_secret_source.t) list
   ; calls : Sol_cli_deployment_plan.service_call list
   ; called_by : Sol_cli_deployment_plan.service_call list
   }

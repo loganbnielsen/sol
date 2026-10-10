@@ -1,4 +1,4 @@
-type secret_source = Sol_cli_manifest_yaml.secret_source =
+type secret_source = Sol_cli_secret_source.t =
   | Sol_managed
   | External of
       { store : string
