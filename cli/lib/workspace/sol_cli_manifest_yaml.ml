@@ -20,7 +20,9 @@ type workload_shape =
   | Http_service
   | Background_worker
 
-type secret_source =
+(* Re-exported, not defined: the model owns the credential vocabulary
+   ([Sol_cli_secret_source]), and this renderer consumes it like any other consumer. *)
+type secret_source = Sol_cli_secret_source.t =
   | Sol_managed
   | External of
       { store : string
