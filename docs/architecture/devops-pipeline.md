@@ -33,7 +33,7 @@ escape hatches do not become public API.
 | Render all workloads, then apply/emit/print | `Sol_cli_factory.execute` → `Sol_cli_executor.run_plan` |
 | Shared deploy lifecycle: lease, contract read, gates, apply, release and group recording | `Sol_cli_deploy_run.run_lifecycle` |
 | Cloud substrate, migration/effective-access gates and provider apply | `Sol_cli_deploy_run.apply` and `cmd_deploy` |
-| Local build, push, port-forward and apply operations | `Sol_cli_up_execution` and `cmd_local_deploy` |
+| Local build, push, port-forward and apply operations | `Sol_cli_up_execution` and `cmd_up` |
 
 The modes are `Dry_run`, `Emit_to dir` and `Apply`. Live secret references are
 verified before application; emitted artifacts must use an artifact-safe backend.
@@ -49,7 +49,7 @@ that a group is active or that a workload succeeded.
 
 There are three writers: local `sol local deploy` and direct deploy both run
 `Sol_cli_deploy_run.run_lifecycle`, which records the release boundary and then the
-group record; rollback (`Sol_cli_rollback.execute`) writes separately. Local deploy has no
+group record; rollback (`Sol_cli_rollback.execute`) writes separately. Local up has no
 release record, so release persistence cannot replace this shared record without also
 changing that local lifecycle. The shared owner writes the release and then the group
 record; rollback verifies and moves the release pointer before correcting the group
@@ -94,43 +94,25 @@ without a lease because they do not mutate the boundary.
 
 ## Command map
 
-### `sol local deploy`
+### `sol local infra up`
 
-**Modules:** `cli/bin/cmd_local_deploy.ml` → `run` — prerequisite establishment and
-the workload pipeline are one entry point.
+**Module:** `cli/bin/cmd_local.ml` → `dev_up`
 
-Establishes the local prerequisites idempotently, then builds and deploys:
+Provisions a local k3d cluster and installs the local factory substrate via
+Helm. Does **not** run the Plan/Render/Execute pipeline. Steps:
 
 1. Check required tools (k3d, helm, kubectl).
-2. Create k3d cluster `sol-local` with a local registry on port 5000 (idempotent —
-   an existing cluster and its data are reused, never recreated).
+2. Create k3d cluster `sol-local` with a local registry on port 5000 (idempotent).
 3. Scan the workspace with `Sol_cli_workspace.scan` to discover which infra components
    are needed (Kafka, PostgreSQL, Loki, Prometheus).
 4. Install required Helm charts: Redpanda, PostgreSQL (bitnami), Loki, Prometheus.
 5. Start background port-forwards via `Sol_cli_port_forward.start` so localhost
    addresses match in-cluster addresses.
-6. Discover services and build the plan
-   (`Sol_cli_deployment_plan.of_services_result`); pre-flight validates `POSTGRES_URL`
-   (injected from the in-cluster value).
-7. Consumer group removal guard: compare `Sol_cli_deployment_state.load_deployed_groups`
-   with the plan's groups; abort if removed groups are found (unless
-   `--confirm-group-change`).
-8. Copy the workspace to a temp Docker context dir (rsync, resolving symlinks).
-9. For each service: `Sol_cli_docker.build`, `Sol_cli_docker.push`, then
-   `Sol_cli_executor.local`.
-10. Wait for rollout (`Sol_cli_kubectl.rollout_status`) for Svc and Worker primitives.
-11. Start/refresh the port-forward for Svc services.
-12. **State:** `Sol_cli_deploy_run.run_lifecycle` records the release boundary and
-    `Sol_cli_deployment_state.record_outcome` writes the applied consumer groups.
 
-**Flags:** `--dry-run` (prints YAML and skips the prerequisite phase, build, push and
-apply), `--tag TAG`, `--scope DOMAIN[/UNIT]`, `--confirm-group-change`,
-`--keep-releases=N`.
+**Key modules:** `Sol_cli_workspace`, `Sol_cli_helm`, `Sol_cli_port_forward`, `Sol_cli_state`
 
-`sol local down` stops the background port-forwards and nothing else. The k3d
-cluster and its data are removed by the user's own tool
-(`k3d cluster delete sol-local`), which is also how local qualification settles
-cluster teardown.
+**No deployment plan is constructed** — this command manages the local substrate
+the rest of the factory targets.
 
 ---
 
@@ -141,10 +123,38 @@ cluster teardown.
 Builds all workspace services with `dune build` and runs each executable directly
 on the host (not inside k3d). Injects dev environment variables
 (`KAFKA_BROKERS=localhost:9092`, `POSTGRES_URL=...`, etc.) that match the
-port-forwards started by `sol local deploy`. Prefixes each service's stdout/stderr with
+port-forwards started by `sol local infra up`. Prefixes each service's stdout/stderr with
 `[domain/name]`. Stops all children on Ctrl-C (SIGTERM → SIGKILL).
 
 **No Plan/Render/Execute pipeline** — services run as native processes.
+
+---
+
+### `sol local deploy`
+
+**Module:** `cli/bin/cmd_up.ml` → `run`
+
+Full local deploy: builds Docker images, synthesizes manifests, applies to k3d.
+This is the self-contained factory path for local smoke tests.
+
+Pipeline:
+
+1. Discover services (`Sol_cli_manifest.discover_services`).
+2. Pre-flight: validate `POSTGRES_URL` (injected from in-cluster value if against k3d).
+3. Construct env_target with `Sol_cli_env_target.local_defaults`.
+4. **Plan:** `Sol_cli_deployment_plan.of_services_result` → `plan`.
+5. Consumer group removal guard: compare `Sol_cli_deployment_state.load_deployed_groups`
+   with plan's groups; abort if removed groups found (unless `--confirm-group-change`).
+6. Copy workspace to a temp Docker context dir (rsync, resolving symlinks).
+7. For each service: `Sol_cli_docker.build`, `Sol_cli_docker.push`,
+   then `Sol_cli_executor.local ~dry_run`.
+8. Wait for rollout (`Sol_cli_kubectl.rollout_status`) for Svc and Worker primitives.
+9. Start/refresh port-forward for Svc services.
+10. **State:** `Sol_cli_deploy_run.run_lifecycle` records the release boundary and
+    `Sol_cli_deployment_state.record_outcome` writes the applied consumer groups.
+
+**Flags:** `--dry-run` (prints YAML, skips build/push/apply), `--tag TAG`,
+`--confirm-group-change`
 
 ---
 
@@ -274,15 +284,24 @@ new deploy's id, and every workload outside it keeps both the spec and the
 provenance it already had, read from the current boundary before anything is
 mutated (a scoped deploy refuses, before any mutation, if that boundary cannot
 be read — a whole-workspace deploy does not need it, because it supersedes
-every workload). Rollback verifies and re-applies each workload under *its own*
-`applied_by`, so restoring a boundary that touched one unit neither re-labels
-nor prunes the units it never touched, while a full-workspace deploy that drops
-a workload still records a boundary without it and rollback still prunes it.
-The boundary's id is derived from the workloads the deploy applied together
-with the provenance of the ones it inherited — a whole-workspace deploy with
-nothing inherited is exactly its content id, as before — so a record's content
-is always a function of its id and the immutable ConfigMap is never rewritten
-with different content. The release id restores that
+every workload). The boundary's id is derived from the workloads the deploy
+applied together with the provenance of the ones it inherited — a
+whole-workspace deploy with nothing inherited is exactly its content id, as
+before — so a record's content is always a function of its id and the
+immutable ConfigMap is never rewritten with different content.
+
+The `release` label a workload's objects carry is *not* `applied_by`. It is the
+workload's own immutable identity (`Sol_cli_deployment_plan.workload_release_id`):
+a content id over just that workload's effective spec, plus the workspace and
+environment. A whole-target deploy re-applies every declared workload but only a
+workload whose effective image or configuration actually changed carries a new
+label, so changing one workload never re-labels — and therefore never rolls out —
+the others (#1305). A workload whose configuration really changed still rolls out
+through its config-hash annotation and container image, which the same spec
+drives. Rollback verifies and re-applies each workload under its own identity, so
+restoring a boundary that touched one unit neither re-labels nor rolls out the
+units it never touched, while a full-workspace deploy that drops a workload still
+records a boundary without it and rollback still prunes it. The release id restores that
 recorded release boundary. Does not use `kubectl rollout undo` — that
 mechanism cannot restore config, volumes, or ingress. Restoration comes
 entirely from the release record `sol local deploy`/`sol deploy` write on every deploy
@@ -371,17 +390,26 @@ is `Sol_cli_rollback.execute` (FEAT-075), not inline logic in
 mutation ahead of a refusal — or the pointer ahead of workload verification
 or pruning — fails a test rather than only a future incident.
 
-**`sol local deploy`/`sol deploy` report the same surplus, but never delete it**
-(FEAT-074): after a successful whole-workspace apply, both compare the live
-Sol-owned workload set against the plan's `services` (reusing
+**`sol deploy` removes surplus it owns; `sol local deploy` only reports it**
+(FEAT-074, #1305): after a successful apply, both compare the live Sol-owned
+workload set against the plan's `services` (reusing
 `Sol_cli_rollback.unexpected_workloads`, the same pure diff `verify_workloads`
-uses) and print a note listing anything surplus. A `sol local deploy --scope` skips
-this — its plan is only part of the workspace, so comparing it against every
-live workload would flag out-of-scope services as false surplus (`sol deploy`
-has no `--scope`: it always reconciles the whole target). Unlike
-rollback, a deploy has no recorded release boundary backing "this is exactly
-what should exist", only what it was asked to deploy this run, so it never
-prunes automatically; the note points at `sol rollback` for that.
+uses). A whole-target `sol deploy` goes on to reconcile the difference:
+`Sol_cli_deploy_run.remove_surplus_workloads` reads the superseded release's
+recorded UID evidence and removes a surplus workload only while its live UID
+equals a recorded UID (`Sol_cli_rollback.prune_workloads`, the same exact-match
+rule rollback enforces). A surplus object that is provably not Sol's — no
+recorded UID, a different live UID, or absent — is retained and reported; nothing
+is inferred from a declaration, a label or a name, and there is no cluster-wide
+pruning. An *incomplete* reconciliation is different: an unreadable record, an
+unobservable live set, a failed delete, or a surplus object whose live state could
+not be read fails the deploy *before the new release is recorded*. Advancing the
+boundary would drop the UID evidence of a workload the new record no longer
+declares, so the superseded release stays authoritative and the next deploy retries
+with the same evidence. A `sol local deploy --scope` still only reports: its plan is part of
+the workspace, so comparing it against every live workload would flag out-of-scope
+services as false surplus (`sol deploy` has no `--scope`: it always reconciles the
+whole target and always has the released boundary to authorize a removal).
 
 **Mutation boundary (FEAT-072).** Before any step below mutates anything,
 rollback acquires the workspace's boundary lease — the mutable
@@ -598,7 +626,7 @@ Add it to `sol_cli_deployment_plan.ml` (plan phase) or `sol_cli_executor.ml`
 
 ## Generated Kubernetes Artifact Invariants
 
-Every resource emitted by `sol local deploy` and `sol deploy` must satisfy
+Every resource emitted by `sol local deploy`, `sol deploy`, and `sol local infra up` must satisfy
 these invariants. The security context invariants are enforced in
 `cli/test/test_manifest_render.ml` via the `assert_k8s_invariants` helper
 and the `artifact_invariants` test suite.

@@ -108,11 +108,20 @@ let run_plan
     | Dry_run -> Ok secret_backend
     | Apply -> apply_backend secret_backend
   in
+  (* Each workload carries its own immutable identity, not the target-wide release
+     record id, so a deploy that changes one workload does not re-label and roll out
+     the others. See [Sol_cli_deployment_plan.workload_release_id]. *)
   let render spec =
+    let release_id =
+      Sol_cli_deployment_plan.workload_release_id
+        ~workspace:plan.Sol_cli_deployment_plan.workspace
+        ~environment:plan.Sol_cli_deployment_plan.environment.env
+        spec
+    in
     Sol_cli_deployment_render.render_spec
       ~workspace
       ?env
-      ~release_id:plan.release_id
+      ~release_id
       ~secret_backend:backend
       spec
     |> Result.map (fun yaml -> spec, yaml)

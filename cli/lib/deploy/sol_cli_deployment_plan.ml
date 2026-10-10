@@ -284,6 +284,25 @@ let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload
   }
 ;;
 
+(* The immutable identity a workload's own Kubernetes objects carry as their [release]
+   label. It hashes only the inputs that determine that workload's own Pod template —
+   the workspace, the environment and the workload spec — never the target-wide release
+   record id, so a whole-target deploy that changes one workload leaves every unchanged
+   workload's template, and therefore its rollout, untouched. A change that really does
+   alter a workload's effective configuration or image still rolls it: the same spec
+   also drives the container image and the config-hash annotation the renderer emits.
+   See docs/architecture/devops-pipeline.md. *)
+let workload_release_id ~workspace ~environment (spec : service_spec)
+  : Sol_cli_release_id.t
+  =
+  Sol_cli_release_id.of_content
+    { Sol_cli_release_id.workspace
+    ; environment
+    ; workloads = [ release_workload_of_spec spec ]
+    ; contract = []
+    }
+;;
+
 let canary_step_to_json = function
   | Sol_cli_toml.Weight n -> `Assoc [ "setWeight", `Int n ]
   | Sol_cli_toml.Pause None -> `Assoc [ "pause", `Assoc [] ]

@@ -413,7 +413,15 @@ let run_dry_run ~run_log ~requested_scope ~workspace ~sha ~facts ~declared ~serv
     |> List.fold_left
          (fun acc spec ->
             let* () = acc in
-            dry_run_service ~workspace ~sha ~release_id:plan.release_id spec)
+            dry_run_service
+              ~workspace
+              ~sha
+              ~release_id:
+                (Sol_cli_deployment_plan.workload_release_id
+                   ~workspace:plan.Sol_cli_deployment_plan.workspace
+                   ~environment:plan.Sol_cli_deployment_plan.environment.env
+                   spec)
+              spec)
          (Ok ()))
 ;;
 
@@ -437,7 +445,11 @@ let apply_plan ~run_log ~workspace ~sha ~repo_root ~pf_failed ~lease plan =
               ~ctx_dir:repo_root
               ~sha
               ~pf_failed
-              ~release_id:plan.Sol_cli_deployment_plan.release_id
+              ~release_id:
+                (Sol_cli_deployment_plan.workload_release_id
+                   ~workspace:plan.Sol_cli_deployment_plan.workspace
+                   ~environment:plan.Sol_cli_deployment_plan.environment.env
+                   spec)
               spec)
          (Ok ()))
 ;;

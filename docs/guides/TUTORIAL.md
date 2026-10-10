@@ -54,7 +54,11 @@ The archive's top directory is an installation prefix: `bin/sol`, and `share/sol
 
 Sol's local cluster mirrors production exactly: same Helm charts, same service DNS names, same security model. The only difference is scale (single replica, no persistent volumes).
 
-`sol local deploy` establishes it as part of deploying a workspace: [Part 2](#part-2--scaffold-a-workspace) scaffolds one, and [Part 3](#part-3--deploy-to-the-local-cluster) runs the deploy. The command creates a k3d cluster named `sol-local` and installs:
+```bash
+sol local infra up
+```
+
+This creates a k3d cluster named `sol-local` and installs:
 
 | Component | What it does |
 |-----------|-------------|
@@ -74,7 +78,7 @@ Grafana         localhost:3000   (admin / dev)
 Pushgateway     localhost:9091
 ```
 
-These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local down` stops them and leaves the cluster and its data in place; remove the cluster itself with `k3d cluster delete sol-local`. Running `sol local deploy` again clears any stale port-forwards first, so repeat runs are safe.
+These port-forwards are managed by Sol in the background (PIDs recorded in `~/.local/share/sol/`). `sol local infra down` tears everything down. Running `sol local infra up` again clears any stale port-forwards first, so repeat runs are safe.
 
 Each forward is observed until the addressed local port is actually owned by it; the command does not print a ready summary just because a supervisor started. If a required endpoint — one of the resources the workspace declares, plus the ingress — does not become ready within Sol's bound, the command names it, prints the forward's log, and exits nonzero, leaving the cluster and its Helm releases in place so you can fix the cause and re-run. Forwards Sol provisions opportunistically, without a corresponding declared requirement, are reported as optional instead of failing the run.
 
@@ -96,9 +100,9 @@ sol local run
 
 `sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile` and runs each one as a **native process** — no Docker image rebuild required. The workload's declared language (above) picks how it is built and launched: an OCaml unit is built with a single `dune build` across all of them and its compiled binary is spawned; a TypeScript unit is built with `npm run build` in its npm project and its built entry is run with `node`. Sol launches each service with its literal argv and working directory — paths with spaces or shell metacharacters need no quoting — and owns each process, so Ctrl-C or SIGTERM stops every service Sol started and leaves no descendants. If one service exits nonzero or is signalled, Sol stops the rest and exits nonzero rather than reporting a successful run. Each service's stdout and stderr is prefixed with `[domain/name]`, so you can follow several in one terminal.
 
-The environment variables your services expect are inherited directly from the shell (set by `sol local deploy`'s port-forwards):
+The environment variables your services expect are inherited directly from the shell (set by `sol local infra up`'s port-forwards):
 
-| Variable | Value (set by `sol local deploy`) |
+| Variable | Value (set by `sol local infra up`) |
 |---|---|
 | `KAFKA_SECURITY_PROTOCOL` | `plaintext` (required; set by `sol local run`) |
 | `KAFKA_BROKERS` | `localhost:9092` (required) |
@@ -113,10 +117,10 @@ The environment variables your services expect are inherited directly from the s
 |---|---|---|
 | How services run | Native processes — the compiled binary (OCaml) or `node` on the built entry (TypeScript) | Docker containers in k3d |
 | On code change | Rebuild + re-run (~seconds) | `docker build` + redeploy (~minutes) |
-| Uses k3d infra | Yes (via port-forwards from `sol local deploy`) | Yes |
+| Uses k3d infra | Yes (via port-forwards from `sol local infra up`) | Yes |
 | Good for | Fast edit-compile-run loop | Final smoke test before CI |
 
-Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sol local deploy` started. The difference is only in how the service processes themselves are launched.
+Both commands talk to the same Kafka broker, PostgreSQL, and Loki instance that `sol local infra up` started. The difference is only in how the service processes themselves are launched.
 
 ---
 
@@ -390,15 +394,7 @@ The `lib/dune` file publishes this as `pluto_storage`, a library both services d
 
 ## Part 3 — Deploy to the local cluster
 
-Run the deploy:
-
-```bash
-sol local deploy
-```
-
-The first run establishes the local cluster and its infrastructure (Part 1
-describes what it brings up). It then stops and names the workspace's secrets,
-because a deploy only *verifies* secrets and never writes one. Create them
+Secrets are the one input Sol never writes during a deploy, so create them first
 (`sol local secret set` is the only Sol path that writes a secret value, and it
 also creates the namespace when it is missing):
 
@@ -407,8 +403,7 @@ sol local secret set POSTGRES_URL --value "postgresql://postgres:dev@postgresql.
 sol local secret set SOL_API_KEY --value dev-internal-key
 ```
 
-Then deploy again; the cluster is reused, not recreated, and its data is
-untouched:
+Then deploy:
 
 ```bash
 sol local deploy
@@ -474,7 +469,7 @@ Prefer events for cross-domain flows unless the synchronous dependency is part
 of the service contract.
 
 These names are deterministic from the Helm release names and workspace/domain
-names chosen by `sol local deploy`.
+names chosen by `sol local infra up`.
 
 After `sol local deploy` finishes, Sol verifies workload readiness. For inspection of the
 local cluster, use `kubectl` and the local Grafana interface.
@@ -606,7 +601,7 @@ Sol registers these metrics automatically when `?ot` is wired in the service ent
 
 ### Traces
 
-Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol local deploy` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
+Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol local infra up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
 
 Tracing is `-svc`-only for now. `notify-worker` receives the same trace context and logs the matching `trace_id` for correlation, but doesn't wrap its work in a span, so it doesn't emit its own spans to Tempo yet.
 
@@ -704,7 +699,7 @@ pieces to `Service.run`'s `?ot`/`?metrics_renderer`.
 
 When `LOKI_URL`/`TEMPO_URL` are absent (local `dune exec` dev), logs go to
 stdout in logfmt format and no traces are emitted. In the cluster,
-`sol local deploy` sets Loki/Tempo automatically. The code is identical either way.
+`sol local infra up` sets Loki/Tempo automatically. The code is identical either way.
 Workers follow the same pattern, but only service handlers currently opt into
 application spans.
 
@@ -719,11 +714,12 @@ sol new worker <domain>/<name> [--language typescript] add a Kafka consumer
 sol new fn <domain>/<name>                         add a scheduled function
 sol new event <team>/<name>                       add a typed Kafka event
 
-sol local deploy [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  establish local cluster + infra, build images and deploy
-sol local down                                     stop Sol's local port-forwards (the k3d cluster and its data are left in place)
+sol local infra up                                        provision local k3d cluster
+sol local infra down                                      tear down the cluster
 sol local run [--scope DOMAIN[/UNIT]]                 run services as native processes (fast iteration)
 
 sol plan TARGET                                   print merged app/resource/service plan
+sol local deploy [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to local cluster
 sol deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
 sol releases                                     list this workspace's recorded releases (id, environment, workloads)
@@ -930,7 +926,7 @@ A verified rollback also corrects the workspace's consumer-group safety record t
 For logs and traces, use Grafana/Loki with the workspace, domain, and service
 labels Sol injects into workloads.
 
-Every `sol local deploy` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label identifies the deploy that last applied it; a scoped local `sol local deploy` release record also retains untouched workloads and their earlier provenance. Use that workload label to filter telemetry in the configured observability tools.
+Every `sol local deploy` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label is that workload's own immutable identity, derived from its effective spec, so a deploy that changes one workload leaves the labels — and Pod templates — of the others untouched; a scoped local `sol local deploy` release record also retains untouched workloads and their earlier provenance. Use that workload label to filter telemetry in the configured observability tools.
 
 There is no separate deployment-attempt history: a failed apply is not recorded as an attempt. The release record is written only on success, and a failed apply leaves the current-release pointer unchanged, so the prior release is still authoritative.
 
@@ -988,7 +984,7 @@ Set Terraform variables through the target's `terraform_var_file` and provider c
 kubectl get svc -n ingress-nginx ingress-nginx-controller   # EXTERNAL-IP
 ```
 
-Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`platform/cloud/aws/cluster` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local deploy` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
+Create an `A`/alias or `CNAME` record for each `ingress_host` — or one wildcard record such as `*.acme.com` — in the zone created by your provider module (`platform/cloud/aws/cluster` exposes `route53_zone_id` and `route53_nameservers`; point your registrar's NS at the latter on first setup). Sol deliberately does not run external-dns, so this is a required manual step, and cert-manager only finishes TLS once the name resolves. Locally there is nothing to do: `sol local infra up` forwards the same controller to `http://localhost:8088`, and a service with no `ingress_host` gets the dev host `<svc>.<namespace>.localhost` — send it as the `Host` header, e.g. `curl -H 'Host: charge-svc.acme-payments.localhost' http://localhost:8088/health`.
 
 > **Advanced / manual recovery:** direct Terraform is an escape hatch, not the supported lifecycle. An operator using it must initialize each root against its correct durable backend (distinct `sol/<target>/cloud.tfstate` and `sol/<target>/platform.tfstate` keys), preserve cloud-before-platform ordering and explicit output wiring, stage cert-manager before CRD-dependent resources, and perform the same live readiness checks. Do not use a bare `terraform init`, local state, or ambient kubeconfig as a substitute for `sol deploy`. See `docs/deployment/production-bootstrap.md` for the recovery procedure.
 

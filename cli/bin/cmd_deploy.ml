@@ -608,34 +608,13 @@ let run_emit (ctx : Sol_cli_deploy_run.context) ~dir =
   Ok ()
 ;;
 
-let report_surplus_workloads = function
-  | [] -> ()
-  | surplus ->
-    Printf.printf
-      "\nNote: %d live workload(s) in this workspace are not part of this deploy:\n"
-      (List.length surplus);
-    surplus
-    |> List.iter (fun (id : Sol_cli_rollback.workload_identity) ->
-      Printf.printf
-        "  %s %s/%s\n"
-        (Sol_cli_rollback.kind_resource id.kind)
-        id.namespace
-        id.name);
-    Printf.printf
-      "These may be stale from a removed/renamed service. 'sol rollback' prunes them \
-       automatically when restoring a recorded release; delete them by hand if you want \
-       them gone now.\n\
-       %!"
-;;
-
-let report_apply_success (ctx : Sol_cli_deploy_run.context) plan results =
+let report_apply_success (ctx : Sol_cli_deploy_run.context) results =
   results
   |> List.iter (fun r ->
     Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.image);
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
   print_service_urls (Sol_cli_deploy_run.http_services ~ctx:ctx.execution.cluster results);
-  Printf.printf "Use Kubernetes tooling to inspect workload health after deployment.\n";
-  report_surplus_workloads (Sol_cli_deploy_run.surplus_workloads ctx plan)
+  Printf.printf "Use Kubernetes tooling to inspect workload health after deployment.\n%!"
 ;;
 
 let namespace_of_facts ~workspace (facts : Sol_cli_workspace_model.t) =
@@ -755,7 +734,7 @@ let run_apply
          ~ctx:ctx.execution.cluster
          ~target_cfg:ctx.target_cfg
          ~loki_push_url)
-    ~report_success:(report_apply_success ctx)
+    ~report_success:(fun _plan results -> report_apply_success ctx results)
     plan
   |> Result.map_error run_failed
 ;;
