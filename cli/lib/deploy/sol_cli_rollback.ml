@@ -680,23 +680,9 @@ let kind_resource kind = fst (live_kind_path kind)
    UID is recorded with its workload's, so an orphan can be removed under the same positive
    ownership discipline. *)
 let external_secret_of_spec (spec : Sol_cli_deployment_plan.service_spec) =
-  let has_external =
-    List.exists
-      (fun (_, source) ->
-         match source with
-         | Sol_cli_manifest.Sol_managed -> false
-         | External _ -> true)
-      spec.secret_sources
-  in
-  if has_external
-  then (
-    let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
-    let name =
-      Sol_cli_manifest.external_secret_name
-        (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name)
-    in
-    Some { Sol_cli_workload_ownership.resource = "externalsecret"; namespace; name })
-  else None
+  Sol_cli_deployment_plan.external_secret_of_spec spec
+  |> Option.map (fun (namespace, name) ->
+    { Sol_cli_workload_ownership.resource = "externalsecret"; namespace; name })
 ;;
 
 let declared_external_secrets (plan : Sol_cli_deployment_plan.t) =

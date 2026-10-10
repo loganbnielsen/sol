@@ -111,19 +111,31 @@ let of_plan_with_boundary
      records none, which a removal must read as "no evidence". Matching kind too
      matters: two units can normalize to one name and still project to different
      objects (a Deployment and a CronJob both named [charge-svc]). A unit's
-     ExternalSecret (<name>-external-secrets) is recorded with its workload, so an
-     orphan can be pruned with the same UID evidence. *)
+     ExternalSecret is attached through the one projection in
+     [Sol_cli_deployment_plan.external_secret_of_spec], shared with evidence capture and
+     the prune's declared set.
+
+     Invariant: every entry captured into [owned] must be attached to some workload here,
+     or it is silently dropped before the record is written. That is how a correct capture
+     and a correct prune once shipped with the evidence never recorded — a new evidence
+     type needs a matching arm here and a test that it survives into the record
+     (test_deploy_run: "a captured evidence entry is recorded with its workload"). *)
   let owned_for (spec : Sol_cli_deployment_plan.service_spec) =
     let resource = Sol_cli_deployment_plan.resource_of_spec spec in
     let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
     let name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
-    let external_secret = Sol_cli_manifest.external_secret_name name in
+    let external_secret = Sol_cli_deployment_plan.external_secret_of_spec spec in
     List.filter
       (fun (o : Sol_cli_release_id.owned_object) ->
          String.equal o.namespace namespace
          && ((String.equal o.resource resource && String.equal o.name name)
-             || (String.equal o.resource "externalsecret"
-                 && String.equal o.name external_secret)))
+             ||
+             match external_secret with
+             | Some (external_namespace, external_name) ->
+               String.equal o.resource "externalsecret"
+               && String.equal o.namespace external_namespace
+               && String.equal o.name external_name
+             | None -> false))
       owned
   in
   let deployed_records = List.map (applied_by "") deployed in
