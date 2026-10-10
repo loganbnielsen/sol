@@ -518,9 +518,9 @@ let json_string key fields =
 (* One interpreter for the ESO condition, shared by the deploy gate and `sol secret
    status`, so the two can never disagree. External Secrets Operator's
    ExternalSecretStatusCondition carries only type/status/reason/message/lastTransitionTime
-   (verified against the upstream API through v0.20 and the current v1 spec): it has no
-   observedGeneration, so a Ready condition cannot be tied to metadata.generation, and that
-   field must not be required. *)
+   (verified against the upstream API through v0.20 and the current v1 spec): it publishes no
+   observedGeneration, so freshness is established from status.syncedResourceVersion instead
+   (see [synced_version_matches]). *)
 type eso_state =
   | Eso_synced of
       { generation : string option
@@ -528,10 +528,6 @@ type eso_state =
       ; refresh_time : string option
       }
   | Eso_not_ready of string
-  | Eso_stale_generation of
-      { generation : string
-      ; observed : string
-      }
 
 let eso_state_of_json json =
   let root = json_object json in
@@ -554,19 +550,14 @@ let eso_state_of_json json =
   | Some condition ->
     let state = json_string "status" condition in
     let reason = json_string "reason" condition in
-    let observed = json_string "observedGeneration" condition in
     if state <> Some "True" || reason <> Some "SecretSynced"
     then Eso_not_ready (Option.value reason ~default:"not ready")
-    else (
-      match generation, observed with
-      | Some generation, Some observed when not (String.equal generation observed) ->
-        Eso_stale_generation { generation; observed }
-      | _ ->
-        Eso_synced
-          { generation
-          ; synced_version = json_string "syncedResourceVersion" status
-          ; refresh_time = json_string "refreshTime" status
-          })
+    else
+      Eso_synced
+        { generation
+        ; synced_version = json_string "syncedResourceVersion" status
+        ; refresh_time = json_string "refreshTime" status
+        }
 ;;
 
 let eso_sync_timeout_s = 150.
@@ -629,19 +620,6 @@ let wait_for_external_secret_sync ~timeout_s ~poll_s ~ctx ~namespace ~external_n
       else (
         Unix.sleepf poll_s;
         poll ())
-    | Eso_stale_generation { generation; observed } ->
-      if expired ()
-      then
-        Error
-          (Printf.sprintf
-             "ESO condition for %s/%s is stale for metadata generation %s (observed %s)"
-             namespace
-             external_name
-             generation
-             observed)
-      else (
-        Unix.sleepf poll_s;
-        poll ())
     | Eso_synced { generation; synced_version; refresh_time = _ } ->
       (match synced_version_matches ~generation synced_version with
        | Some true -> Ok ()
@@ -657,6 +635,10 @@ let wait_for_external_secret_sync ~timeout_s ~poll_s ~ctx ~namespace ~external_n
          else (
            Unix.sleepf poll_s;
            poll ())
+       (* markAsDone sets the Ready condition, RefreshTime and SyncedResourceVersion on one
+          status object, and the reconciler writes that status once (a deferred
+          Status().Update), so an absent version beside a Ready condition is deterministic
+          rather than a torn read: warn once instead of retrying. *)
        | None ->
          warn_unverified
            (match generation, synced_version with
@@ -743,12 +725,6 @@ let external_secret_status ~ctx ~namespace ~unit_name ~expected_keys =
        in
        (match eso_state_of_json json with
         | Eso_not_ready reason -> Ok ("not ready (" ^ reason ^ ")")
-        | Eso_stale_generation { generation; observed } ->
-          Ok
-            (Printf.sprintf
-               "not ready (stale for metadata generation %s (observed %s))"
-               generation
-               observed)
         | Eso_synced { refresh_time; _ } ->
           let* materialized = get_named_secret_json ~ctx ~name namespace in
           let found =

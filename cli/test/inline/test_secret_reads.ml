@@ -70,13 +70,11 @@ if [ "$verb" = "get" ]; then
         printf '{"metadata":{"name":"charge-svc-external-secrets","namespace":"payments","uid":"es-uid","generation":2,"labels":{"app.kubernetes.io/managed-by":"sol"}},"spec":{"target":{"name":"charge-svc-external-secrets"}},"status":{"refreshTime":"2026-10-10T12:00:00Z","syncedResourceVersion":"2-abc","conditions":[{"type":"Ready","status":"%%s","reason":"%%s"}]}}\n' "$state" "$reason"
         exit 0
       fi
-      if [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
-        observed=2
+      if [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
         reason=SecretSynced
         state=True
-        [ "$mode" = "eso-stale" ] && observed=1
         if [ "$mode" = "eso-not-synced" ]; then reason=SecretSyncedError; state=False; fi
-        printf '{"metadata":{"generation":2},"status":{"refreshTime":"2026-10-10T12:00:00Z","conditions":[{"type":"Ready","status":"%%s","reason":"%%s","observedGeneration":%%s}]}}\n' "$state" "$reason" "$observed"
+        printf '{"metadata":{"generation":2},"status":{"refreshTime":"2026-10-10T12:00:00Z","conditions":[{"type":"Ready","status":"%%s","reason":"%%s"}]}}\n' "$state" "$reason"
       fi
       exit 0 ;;
     externalsecrets)
@@ -106,7 +104,7 @@ if [ "$verb" = "get" ]; then
         esac
         exit 0
       fi
-      if [ "$mode" = "eso-ready" ] || [ "$mode" = "eso-no-synced-version" ] || [ "$mode" = "eso-stale-version" ] || [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
+      if [ "$mode" = "eso-ready" ] || [ "$mode" = "eso-no-synced-version" ] || [ "$mode" = "eso-stale-version" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
         if [ "$mode" = "eso-wrong-keys" ]; then
           echo '{"apiVersion":"v1","kind":"Secret","data":{"OTHER_KEY":"c2VjcmV0"}}'
         else
@@ -601,10 +599,6 @@ let%test "external Secret deploy readiness accepts exact synced key set" =
 
 let%test "external Secret deploy readiness rejects unsynced ESO condition" =
   test_external_secret_readiness_fails_closed "eso-not-synced" "SecretSyncedError"
-;;
-
-let%test "external Secret deploy readiness rejects stale generation" =
-  test_external_secret_readiness_fails_closed "eso-stale" "stale for metadata generation"
 ;;
 
 let%test "external Secret deploy readiness rejects wrong materialized keys" =
