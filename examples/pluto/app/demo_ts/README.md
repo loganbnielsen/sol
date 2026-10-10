@@ -36,7 +36,7 @@ producer and a consumer cannot accept different payloads under the same event
 name: `order_svc` imports `OrderPlaced`/`decodeOrderPlaced` to produce and relay
 it, `fulfillment_worker` imports `OrderFulfilled`/`OrderPlaced` and their
 decoders for its consumer and its outbox relay, and `main.ts` is the workspace's
-projection program. `sol up
+projection program. `sol local deploy
 --scope=demo_ts` runs it (`npm run contract`) before any workload, so both topics
 and subjects are registered by the deployment lifecycle; both services only
 resolve the topic and schema id at startup and fail if a contract is not
@@ -145,7 +145,7 @@ their npm dependencies are installed:
 ```bash
 cd examples/pluto
 (cd app/demo_ts && npm ci)      # the units' dependencies; the loop needs them
-sol local infra up              # k3d cluster + broker, schema registry, Postgres, Loki, Tempo, Prometheus
+sol local deploy              # k3d cluster + broker, schema registry, Postgres, Loki, Tempo, Prometheus
 sol local migrate         # the demo's tables are migrations; nothing creates them at runtime
 sol local run --scope=demo_ts
 ```

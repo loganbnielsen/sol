@@ -43,7 +43,7 @@ refuse_mutation cli/lib/deploy/sol_cli_migration_job.ml push "the migration Job 
 
 printf '\nlet _ = Sol_cli_docker.push\n' >>"$tmp/cli/lib/deploy/sol_cli_up_execution.ml"
 if ! "$guard" "$tmp" >/dev/null 2>&1; then
-  echo "guard refused the local sol up path (sol_cli_up_execution.ml) that builds and" \
+  echo "guard refused the local deploy path (sol_cli_up_execution.ml) that builds and" \
     "pushes the workspace's own image" >&2
   exit 1
 fi

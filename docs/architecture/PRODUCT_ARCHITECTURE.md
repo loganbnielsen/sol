@@ -109,8 +109,7 @@ over the same application model.
 The user runs Sol on their machine.
 
 ```bash
-sol local infra up
-sol up
+sol local deploy
 ```
 
 Sol provisions or connects to a local k3d-backed platform, builds images, renders runtime artifacts, applies them locally, and starts port-forwards.
@@ -369,7 +368,7 @@ record.
 
 1. Add a typed `Deployment_plan` module.
 2. Refactor manifest rendering to consume a deployment plan instead of raw discovered services.
-3. Make `sol up` and `sol deploy --emit-to` use the same plan.
+3. Make `sol local deploy` and `sol deploy --emit-to` use the same plan.
 4. Add an environment config model for local and customer-cloud deploys.
 5. Keep Sol-hosted deployment as a documented executor direction until the plan shape is stable.
 

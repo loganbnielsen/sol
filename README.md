@@ -55,10 +55,18 @@ curl -L https://github.com/sol-fab/sol/releases/download/vX.Y.Z/sol-vX.Y.Z-linux
 export PATH="$PWD/sol-vX.Y.Z/bin:$PATH"
 sol assets                # check the install: where its assets come from, and that each is there
 
-sol local infra up        # local cluster: Redpanda, PostgreSQL, Loki, Prometheus, Grafana
 sol new workspace pluto
 cd pluto
-sol up                  # build + deploy
+
+# The first `sol local deploy` establishes the local cluster and its
+# infrastructure (Redpanda, PostgreSQL, Loki, Prometheus, Grafana), then stops
+# until the workspace's secrets exist — a deploy only verifies them.
+sol local deploy
+sol local secret set POSTGRES_URL \
+  --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+sol local secret set SOL_API_KEY --value dev-internal-key
+
+sol local deploy         # build + deploy, reusing the cluster
 
 curl localhost:8080/health
 # ok
@@ -194,7 +202,7 @@ remains the default. `sol new fn` currently supports OCaml only. See
 
 ## Deployment
 
-Sol targets Kubernetes. Run locally against a k3d cluster with `sol up`, or ship to your own AWS/GCP infrastructure with `sol deploy <env>/<provider>/<region>` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. The same whole-target deploy reconciles the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
+Sol targets Kubernetes. Run locally against a k3d cluster with `sol local deploy`, or ship to your own AWS/GCP infrastructure with `sol deploy <env>/<provider>/<region>` (direct or GitOps) — the same application model compiles to Kubernetes manifests and Terraform either way. The same whole-target deploy reconciles the underlying cluster, registry, and database in your own cloud account; Sol never owns your infrastructure.
 
 Two things are worth distinguishing, because conflating them is the usual source
 of lifecycle confusion:

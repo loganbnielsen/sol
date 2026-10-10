@@ -138,7 +138,7 @@ runtime.
 Every generated workload's `<name>-env` ConfigMap carries `SOL_ENV`, set to the
 resolved target's environment. Two properties are deliberate:
 
-- **It is absent when no target is resolved.** `sol up` against the local
+- **It is absent when no target is resolved.** `sol local deploy` against the local
   cluster deploys without a resolved target, so nothing sets it. Application
   code should treat "no environment" as a real state rather than assuming a
   value is always present.
@@ -178,7 +178,7 @@ ignored rather than allowed to shadow it. `Sol_obs.of_env` therefore needs the
 `~service` argument only for a process run outside a Sol manifest (a local demo
 or a `dune exec`); when `SOL_SERVICE` is present it wins.
 
-`env` has no `SOL_ENV` when no target is resolved — `sol up` against the local
+`env` has no `SOL_ENV` when no target is resolved — `sol local deploy` against the local
 cluster omits it by design (`docs/architecture/observability-design.md`
 § Identity), and application code treats "no environment" as a real state.
 

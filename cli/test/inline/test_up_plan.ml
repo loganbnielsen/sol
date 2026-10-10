@@ -277,29 +277,29 @@ let test_undeclared_workloads_still_plan () =
 ;;
 
 let%test
-    "sol up and sol deploy plan the same workspace (BUG-056): the two plans agree on \
-     language, replicas and consumer groups"
+    "sol local deploy and sol deploy plan the same workspace (BUG-056): the two plans \
+     agree on language, replicas and consumer groups"
   =
   test_up_and_target_plans_agree ()
 ;;
 
 let%test
-    "sol up and sol deploy plan the same workspace (BUG-056): the local plan carries the \
-     declared facts"
+    "sol local deploy and sol deploy plan the same workspace (BUG-056): the local plan \
+     carries the declared facts"
   =
   test_local_plan_carries_the_declared_facts ()
 ;;
 
 let%test
-    "sol up and sol deploy plan the same workspace (BUG-056): a local plan renders \
-     /readyz for a declared OCaml service"
+    "sol local deploy and sol deploy plan the same workspace (BUG-056): a local plan \
+     renders /readyz for a declared OCaml service"
   =
   test_local_plan_renders_readyz ()
 ;;
 
 let%test
-    "sol up and sol deploy plan the same workspace (BUG-056): an undeclared workspace \
-     still plans, as unknown"
+    "sol local deploy and sol deploy plan the same workspace (BUG-056): an undeclared \
+     workspace still plans, as unknown"
   =
   test_undeclared_workloads_still_plan ()
 ;;

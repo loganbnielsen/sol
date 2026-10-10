@@ -45,7 +45,7 @@ evidence that could have failed" — never "false".
   binaries started on this host (the repository's `ensure-*.sh` scripts run these
   in Docker, and Docker is unavailable in this WSL distribution).
 - **No Kubernetes**: Docker is unavailable, so `k3d`/`k3s` cannot run, and
-  `sol local infra up`, `sol up`, `sol deploy`, `sol status`'s workload health,
+  `sol local deploy`, `sol deploy`,
   Grafana, and Alertmanager are all out of reach on this host. Every row that
   needs a cluster is recorded `UNQUALIFIED (needs a cluster)` rather than
   weakened.

@@ -7,7 +7,7 @@ type deploy_action =
   | Deploy_emit_to of string
   | Deploy_apply
 
-type up_request =
+type local_deploy_request =
   { scope : string option
   ; mode : execution_mode
   ; image_tag : string
@@ -33,14 +33,14 @@ type deploy_request =
 
 val git_sha : unit -> (string, string) result
 
-val make_up_request
+val make_local_deploy_request
   :  scope:string option
   -> dry_run:bool
   -> tag:string option
   -> confirm_group_change:bool
   -> keep_releases:int
   -> git_sha:(unit -> (string, string) result)
-  -> (up_request, string) result
+  -> (local_deploy_request, string) result
 
 val make_deploy_request
   :  target:string

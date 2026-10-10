@@ -11,8 +11,8 @@ This is a reusable audit template. When performing an audit, copy this file (e.g
 **The promise being tested:**
 ```
 sol new workspace myapp   # I have a project
-sol local infra up        # it runs on my laptop
-sol up                    # I can see it working
+sol local deploy        # it runs on my laptop
+sol local deploy                    # I can see it working
 sol cloud init            # I have a cloud environment
 sol deploy <target>       # I can ship
 ```
@@ -96,8 +96,8 @@ After creating a project, the engineer should be able to run the full stack loca
 ### Reproduction gate
 
 ```bash
-sol local infra up
-sol up
+sol local deploy
+sol local deploy
 ```
 
 Then, following the guide:
@@ -106,8 +106,8 @@ Then, following the guide:
 - Open Grafana and confirm metrics and logs appear
 
 **Invariants:**
-* [ ] `sol local infra up` starts all infrastructure without error and prints the addresses of every local service (Kafka, Grafana, Postgres) before exiting
-* [ ] `sol up` starts all workspace services and tails their output in one terminal
+* [ ] `sol local deploy` starts all infrastructure without error and prints the addresses of every local service (Kafka, Grafana, Postgres) before exiting
+* [ ] `sol local deploy` starts all workspace services and tails their output in one terminal
 * [ ] A `POST /charges` request to the local service produces a message that appears in the worker logs
 * [ ] `sol_worker_messages_total` appears in Prometheus after at least one message is processed
 * [ ] The trace/log/metric view lets the auditor follow the request across domain boundaries without manually correlating raw IDs from multiple tools
@@ -297,7 +297,7 @@ applicable today" as a verdict rather than an omission.
   that says `sol new` has no language option, or that TypeScript units cannot be
   scaffolded, is now a finding — just as a guide implying a TypeScript `-fn` or a
   TypeScript workspace scaffold exists would be.
-* [ ] **Local dev path for TypeScript:** `sol up` deploys whatever `sol.yml`
+* [ ] **Local dev path for TypeScript:** `sol local deploy` deploys whatever `sol.yml`
   declares regardless of language, so a TypeScript unit in the workspace is covered
   by the same commands — verify that the documentation makes that legible instead of
   leaving it to be inferred from `demo_ts`.

@@ -139,7 +139,7 @@ let endpoint_failure_message (endpoint : endpoint) message =
   Printf.sprintf
     "endpoint %s is not ready: %s\n\
      The local cluster and its Helm releases were left in place. Fix the cause and \
-     re-run `sol local infra up`."
+     re-run `sol local deploy`."
     endpoint.endpoint_label
     message
 ;;

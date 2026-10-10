@@ -17,7 +17,7 @@ Sol must eliminate "it works on my machine" syndrome. The local loop must mirror
 ### Checklist
 
 * [ ] **Zero-Knowledge Onboarding:** `sol new workspace <name>` generates a fully compiling, zero-warnings codebase on the first try. Library names are workspace-namespaced to prevent collisions in multi-workspace monorepos.
-* [ ] **Whole-plan prevalidation, recorded failure:** `sol up`/`sol deploy` build and render the whole plan before touching the cluster (`Sol_cli_change_set.build` collects every render error first, and `--dry-run` contacts no cluster), so a refusal before the billable boundary changes nothing. Once apply begins, a failure exits non-zero and the release record is written only when apply succeeded, so the prior release remains authoritative. Sol does not promise atomic rollback of a partially-applied set: recovery is re-running `sol deploy` (the plan is idempotent) or `sol rollback <release_id>` to restore a recorded boundary. A scoped deploy or a rollback refuses, before any mutation, when the boundary it must read cannot be read.
+* [ ] **Whole-plan prevalidation, recorded failure:** `sol local deploy`/`sol deploy` build and render the whole plan before touching the cluster (`Sol_cli_change_set.build` collects every render error first, and `--dry-run` contacts no cluster), so a refusal before the billable boundary changes nothing. Once apply begins, a failure exits non-zero and the release record is written only when apply succeeded, so the prior release remains authoritative. Sol does not promise atomic rollback of a partially-applied set: recovery is re-running `sol deploy` (the plan is idempotent) or `sol rollback <release_id>` to restore a recorded boundary. A scoped deploy or a rollback refuses, before any mutation, when the boundary it must read cannot be read.
 * [ ] **Hermetic Test Harnesses:** The E2E test sequence does not rely on ambient `sleep N` timing, manual port-forwards, or host-level broker state. Infrastructure setup is fully scripted and idempotent.
 
 ---
@@ -32,7 +32,7 @@ Sol generates Kubernetes and Kafka topologies from OCaml definitions. The synthe
 
 * [ ] **Containers never run as root:** Every generated `Deployment` and `CronJob` sets `runAsNonRoot: true`, `runAsUser`, and `runAsGroup`. Container-level contexts enforce `allowPrivilegeEscalation: false` and `readOnlyRootFilesystem: true`.
 * [ ] **Seccomp profile is set:** Pod security contexts include `seccompProfile: type: RuntimeDefault`, passing standard Kubernetes security scanners.
-* [ ] **Credentials are never rendered as plaintext:** The generated `ConfigMap` holds only non-sensitive config. With the default backend for `sol up` and a direct `sol deploy` (`kubernetes-live`) Sol renders **no** Secret at all — the workload references a Secret that already exists in the cluster, `sol secret set` (or the operator's secret authority) seeds it, and the deploy fails closed naming every required key that is absent or empty. `kubernetes-placeholder` renders a Secret whose values are empty strings, and `external-secrets` renders an `ExternalSecret`. No backend renders a value.
+* [ ] **Credentials are never rendered as plaintext:** The generated `ConfigMap` holds only non-sensitive config. With the default backend for `sol local deploy` and a direct `sol deploy` (`kubernetes-live`) Sol renders **no** Secret at all — the workload references a Secret that already exists in the cluster, `sol secret set` (or the operator's secret authority) seeds it, and the deploy fails closed naming every required key that is absent or empty. `kubernetes-placeholder` renders a Secret whose values are empty strings, and `external-secrets` renders an `ExternalSecret`. No backend renders a value.
 * [ ] **Services use ClusterIP + Ingress, never NodePort:** Generated `Service` resources use `type: ClusterIP`. HTTP services generate an `Ingress` with TLS redirect.
 * [ ] **NetworkPolicy is generated for every workload:** Each workload gets a `NetworkPolicy` restricting ingress and egress to only what it needs (ingress-nginx, in-cluster pods, Redpanda, PostgreSQL, monitoring namespaces, DNS).
 * [ ] **Subprocesses run from an argv list:** Shipped code (`cli/`, `framework/`, `platform/`) invokes subprocesses through `Sol_cli_process.cmd`, which carries a `string list` argv and never a shell string; `Sys.command` appears nowhere in those trees. The deliberate shell exceptions are `sol local run`'s generated command and maintainer tooling (`internal/tooling/sol_process.run_shell`), and both `Filename.quote` every interpolated value.
@@ -91,7 +91,7 @@ cd audit_test
 eval $(opam env) && dune build 2>&1 | grep -i warning  # must be empty
 
 # 2. Bring up local infrastructure
-sol local infra up
+sol local deploy
 # All port-forwards must appear before the command exits
 
 # 3. Verify each service address is reachable
@@ -104,8 +104,8 @@ KAFKA_SECURITY_PROTOCOL=plaintext KAFKA_BROKERS=localhost:9092 SCHEMA_REGISTRY_U
 
 **Invariants:**
 * [ ] `dune build` produces zero warnings on a freshly scaffolded workspace
-* [ ] `sol local infra up` is idempotent — running it twice must not error or duplicate resources
-* [ ] All health endpoints return `200` within 10 seconds of `sol local infra up` completing
+* [ ] `sol local deploy` is idempotent — running it twice must not error or duplicate resources
+* [ ] All health endpoints return `200` within 10 seconds of `sol local deploy` completing
 * [ ] A message produced in the demo reaches the worker and is logged without decode errors
 
 ---
@@ -117,7 +117,7 @@ Each step below must leave the cluster and the workspace exactly as it was befor
 ```bash
 # 1. Refusal before the cluster is touched: a build failure
 echo "RUN this_command_does_not_exist" >> app/payments/charge_svc/Dockerfile
-sol up
+sol local deploy
 # Expected: non-zero exit, reported before any manifest is applied
 kubectl get pods -l workspace=audit_test --all-namespaces  # must be empty
 git checkout app/payments/charge_svc/Dockerfile
@@ -147,7 +147,7 @@ sol releases --target dev/aws/us-east-1
 ### 5.3 Observability Smoke Test
 
 ```bash
-# After sol local infra up:
+# After sol local deploy:
 
 # Prometheus: verify worker metrics are registered
 curl -s http://localhost:9090/api/v1/label/__name__/values \

@@ -152,11 +152,11 @@ ok "preflight fails closed and names the missing tool"
 fresh_case infra
 run_phase infra
 expect_ok "infra completes"
-contains "$STUB_SOL_LOG" "local infra up" "the harness drives sol local infra up"
-[ -f "$RUN_LOG/infra-up.log" ] || bad "infra captures its own log"
+contains "$STUB_SOL_LOG" "local deploy" "the harness drives sol local deploy"
+[ -f "$RUN_LOG/local-deploy.log" ] || bad "infra captures its own log"
 [ -f "$RUN_LOG/namespaces.txt" ] || bad "infra captures the namespace inventory"
 [ -f "$RUN_LOG/helm-releases.txt" ] || bad "infra captures the Helm releases"
-ok "infra drives sol local infra up and captures the cluster inventory"
+ok "infra drives sol local deploy and captures the cluster inventory"
 
 fresh_case rows
 run_phase rows
@@ -169,9 +169,9 @@ export STUB_K3D_CLUSTERS=""
 export STUB_DOCKER_PS=""
 run_phase teardown
 expect_ok "teardown succeeds once absence is established"
-contains "$STUB_SOL_LOG" "local infra down --cluster" "teardown deletes the cluster"
+contains "$STUB_SOL_LOG" "local down" "teardown stops Sol's port-forwards"
 contains "$RUN_LOG/teardown-verdict.txt" "ABSENT" "absence is recorded"
-ok "teardown deletes the cluster and verifies absence"
+ok "teardown stops Sol's port-forwards and verifies the cluster's absence"
 
 fresh_case teardown-present
 export STUB_K3D_CLUSTERS="sol-local"

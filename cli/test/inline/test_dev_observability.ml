@@ -258,7 +258,7 @@ let test_alloy_values_yaml_against_real_file () =
     assert_contains "taxonomy label: release" yaml "__meta_kubernetes_pod_label_release";
     assert_contains "taxonomy label: env" yaml "__meta_kubernetes_pod_label_env";
     check_bool
-      "no basic_auth block for sol local infra up"
+      "no basic_auth block for sol local deploy"
       false
       (Sol_cli_string.contains ~needle:"basic_auth" yaml)
 ;;

@@ -87,10 +87,17 @@ The local loop needs no cloud account and is the fastest way to see what Sol
 generates:
 
 ```bash
-sol local infra up
 sol new workspace demo
 cd demo
-sol up
+
+# The first run establishes the local cluster and its infrastructure, then stops
+# until the workspace's secrets exist; a deploy only verifies them.
+sol local deploy
+sol local secret set POSTGRES_URL \
+  --value "postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev"
+sol local secret set SOL_API_KEY --value dev-internal-key
+
+sol local deploy
 curl localhost:8080/health
 ```
 

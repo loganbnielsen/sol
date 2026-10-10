@@ -42,7 +42,7 @@ let get_postgres_url ~ctx () =
     else
       Error
         "POSTGRES_URL not set and no cluster postgres found.\n\
-        \  Run 'sol local infra up' first, then retry."
+        \  Run 'sol local deploy' to establish the local cluster, then retry."
 ;;
 
 let pg_error_to_string ~url error =

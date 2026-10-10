@@ -52,7 +52,7 @@ DEC-026 §7's invariant.
 
 ### Ordinary deploy and rollback never write a secret value
 
-An ordinary `sol deploy`, `sol up` or `sol rollback` delivers secret *references*
+An ordinary `sol deploy`, `sol local deploy` or `sol rollback` delivers secret *references*
 only. It renders no Secret object, reads no value from the deploying process's
 environment, and never mutates a Secret. Before it applies a workload it verifies
 that the live `<svc>-secrets` object exists and carries every required non-empty

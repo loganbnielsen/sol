@@ -443,7 +443,7 @@ The runs that produced the LOCAL evidence are
 ## What would move the most rows
 
 1. A Kubernetes cluster on this host (the repository's Docker-based
-   `sol local infra up`) — it would make OB-S1/S2/S4, OB-D1/D2, OB-F4 and the
+   `sol local deploy`) — it would make OB-S1/S2/S4, OB-D1/D2, OB-F4 and the
    `kubectl` fallback of OB-L2 observable, and it is what makes the `SOL_*`
    identity a manifest-injected pod fact rather than a manually-set process
    environment (OB-T3's deployed half, and the two-domain crossing trace for
@@ -464,7 +464,7 @@ The rows below are `LIVE` and are **not** established by any local run. The
 reference-app campaign (`examples/pluto` / the scaffolded workspace on a real
 target) must observe each of them; a row stays `UNQUALIFIED` until then.
 
-**A Kubernetes cluster with the observability stack (the repo's `sol local infra up`):**
+**A Kubernetes cluster with the observability stack (the repo's `sol local deploy`):**
 
 - OB-L2 — `sol logs`' `kubectl` fallback delivering real pod logs when Loki is
   unreachable.

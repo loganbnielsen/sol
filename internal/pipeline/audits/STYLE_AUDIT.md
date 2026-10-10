@@ -115,7 +115,7 @@ If a value is required for the operation to succeed, its absence must produce a
 typed `Error`, not an empty string or zero default.
 
 **Live secret references** (`cli/lib/deploy/sol_cli_secret.ml`): the default backend
-for `sol up` and a direct `sol deploy` is `kubernetes-live`, and
+for `sol local deploy` and a direct `sol deploy` is `kubernetes-live`, and
 `Sol_cli_deployment_render` renders **no** Secret resource for it — the workload
 carries references only. Before an apply (and before a rollback restores a boundary)
 `Sol_cli_secret.verify_workload_secret` reads the namespace's
@@ -155,7 +155,7 @@ Secret handling is encoded as a deployment-phase decision derived from the
 
 | Target | Allowed secret backends | Notes |
 |--------|------------------------|-------|
-| `Local` (`sol up`) | `Kubernetes_live` | Sol renders no Secret; the workload references one that already exists, verified before apply |
+| `Local` (`sol local deploy`) | `Kubernetes_live` | Sol renders no Secret; the workload references one that already exists, verified before apply |
 | `Customer_direct` | `Kubernetes_live` | Sol renders no Secret; the workload references one that already exists, verified before apply |
 | `Customer_gitops` | `Kubernetes_placeholder`, `External_secrets` | **Never** `Kubernetes_live`: the artifact is committed to a repository |
 | `Sol_hosted` | `Kubernetes_placeholder` (default) | Real secrets are owned by the Sol hosting plane |

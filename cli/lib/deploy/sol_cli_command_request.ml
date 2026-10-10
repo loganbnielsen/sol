@@ -7,7 +7,7 @@ type deploy_action =
   | Deploy_emit_to of string
   | Deploy_apply
 
-type up_request =
+type local_deploy_request =
   { scope : string option
   ; mode : execution_mode
   ; image_tag : string
@@ -49,7 +49,14 @@ let git_sha () =
 
 let local_fallback_tag = "dev"
 
-let make_up_request ~scope ~dry_run ~tag ~confirm_group_change ~keep_releases ~git_sha =
+let make_local_deploy_request
+      ~scope
+      ~dry_run
+      ~tag
+      ~confirm_group_change
+      ~keep_releases
+      ~git_sha
+  =
   if keep_releases < 1
   then
     Error

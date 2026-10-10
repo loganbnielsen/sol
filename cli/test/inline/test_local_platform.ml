@@ -168,7 +168,11 @@ let test_endpoint_ports_are_distinct () =
     ~msg:"no two forwards share a host port"
     (List.length ports)
     (List.length (List.sort_uniq compare ports));
-  Windtrap.equal Windtrap.bool ~msg:"not sol up's 8080" false (List.mem 8080 ports)
+  Windtrap.equal
+    Windtrap.bool
+    ~msg:"not sol local deploy's 8080"
+    false
+    (List.mem 8080 ports)
 ;;
 
 let test_k3d_api_version () =

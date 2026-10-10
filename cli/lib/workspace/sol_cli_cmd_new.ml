@@ -59,8 +59,7 @@ Done. %d files generated.
 
   cd %s
   eval $(opam env) && dune build   # verify the scaffold compiles
-  sol local infra up   # provision local k3d cluster + infra (first time ~5 min)
-  sol up               # build images, push, deploy  (first build ~5 min if the image cache is cold, ~1 min after)
+  sol local deploy     # establish local cluster + infra, build images, deploy (first time ~5 min)
   sol migrate                          # apply DB migrations
 
   The workspace README.md documents the layout, the framework dependency and

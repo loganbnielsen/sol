@@ -57,35 +57,3 @@ let provision () =
       | Sol_cli_process.Non_zero r -> Sol_cli_process.failure_message r
       | e -> Sol_cli_process.error_to_string e)
 ;;
-
-let delete () =
-  Sol_cli_process.run (k3d [ "cluster"; "delete"; name ])
-  |> Result.map ignore
-  |> Result.map_error (fun failure ->
-    "cluster deletion failed\n"
-    ^
-    match failure with
-    | Sol_cli_process.Non_zero r -> Sol_cli_process.failure_message r
-    | e -> Sol_cli_process.error_to_string e)
-;;
-
-type presence =
-  | Cluster_present
-  | Cluster_absent
-  | Cluster_unobservable of string
-
-let observe () =
-  match Sol_cli_process.run (k3d [ "cluster"; "get"; name ]) with
-  | Ok _ -> Cluster_present
-  | Error (Sol_cli_process.Non_zero _) -> Cluster_absent
-  | Error e -> Cluster_unobservable (Sol_cli_process.error_to_string e)
-;;
-
-let confirm_removed () =
-  match observe () with
-  | Cluster_absent -> Ok ()
-  | Cluster_present ->
-    Error (Printf.sprintf "cluster %s is still present after deletion" name)
-  | Cluster_unobservable reason ->
-    Error (Printf.sprintf "could not confirm cluster %s was removed: %s" name reason)
-;;

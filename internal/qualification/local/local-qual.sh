@@ -72,10 +72,10 @@ phase_preflight() {
 
 phase_infra() {
   assert_environment
-  ( cd "$WORKSPACE" && "$SOL" local infra up ) >"$LOG_DIR/infra-up.log" 2>&1 || {
-    say "FAILED: sol local infra up"
-    tail -n 40 "$LOG_DIR/infra-up.log" >&2 || true
-    fail "sol local infra up did not complete"
+  ( cd "$WORKSPACE" && "$SOL" local deploy ) >"$LOG_DIR/local-deploy.log" 2>&1 || {
+    say "FAILED: sol local deploy"
+    tail -n 40 "$LOG_DIR/local-deploy.log" >&2 || true
+    fail "sol local deploy did not complete"
   }
   k3d kubeconfig get "$CLUSTER" >"$RUN_KUBECONFIG" 2>"$LOG_DIR/run-kubeconfig.err" \
     || fail "could not extract the run kubeconfig for $CLUSTER"
@@ -85,15 +85,7 @@ phase_infra() {
     || fail "the run kubeconfig could not list Helm releases"
   KUBECONFIG="$RUN_KUBECONFIG" kubectl get pods -A -o wide >"$LOG_DIR/pods.txt" 2>&1 \
     || fail "the run kubeconfig could not read pods"
-  ( cd "$WORKSPACE" && "$SOL" local infra status ) >"$LOG_DIR/infra-status.log" 2>&1 || true
   say "infra reachable through $RUN_KUBECONFIG"
-}
-
-phase_status() {
-  assert_environment
-  ( cd "$WORKSPACE" && "$SOL" local infra status ) >"$LOG_DIR/infra-status.log" 2>&1 \
-    || fail "sol local infra status failed"
-  say "status written to $LOG_DIR/infra-status.log"
 }
 
 phase_rows() {
@@ -147,8 +139,10 @@ container_verdict() {
 
 phase_teardown() {
   assert_environment
-  ( cd "$WORKSPACE" && "$SOL" local infra down --cluster ) >"$LOG_DIR/infra-down.log" 2>&1 \
-    || fail "sol local infra down --cluster failed"
+  ( cd "$WORKSPACE" && "$SOL" local down ) >"$LOG_DIR/local-down.log" 2>&1 \
+    || fail "sol local down failed"
+  k3d cluster delete "$CLUSTER" >"$LOG_DIR/cluster-delete.log" 2>&1 \
+    || fail "k3d cluster delete $CLUSTER failed"
   local clusters containers
   clusters="$(cluster_verdict)"
   containers="$(container_verdict)"
@@ -163,7 +157,6 @@ phase_teardown() {
 case "${1:-all}" in
   preflight) phase_preflight ;;
   infra) phase_infra ;;
-  status) phase_status ;;
   rows) phase_rows ;;
   capture) phase_capture ;;
   teardown) phase_teardown ;;
@@ -172,5 +165,5 @@ case "${1:-all}" in
     phase_infra
     phase_capture
     ;;
-  *) fail "unknown phase '${1:-}': preflight | infra | status | rows | capture | teardown | all" ;;
+  *) fail "unknown phase '${1:-}': preflight | infra | rows | capture | teardown | all" ;;
 esac

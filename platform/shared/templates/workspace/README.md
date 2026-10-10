@@ -45,14 +45,14 @@ is unset.
 ## Run locally
 
 ```bash
-sol local infra up   # provision local k3d cluster + Kafka + supporting infra (~5 min first run)
+sol local deploy     # establish local cluster + infra, build images, deploy (~5 min first run)
 sol local run        # run all workspace services locally (dune exec, dev env vars)
 ```
 
 ## Deploy to cluster
 
 ```bash
-sol up          # build images and deploy to cluster
+sol local deploy          # build images and deploy to cluster
 sol migrate     # apply database migrations
 sol rollback    # roll back all services to previous image
 ```
@@ -87,13 +87,13 @@ Three details are deliberate:
   running workload no longer matches what the manifests declare.
 
 The build context is the workspace root -- this directory, the one holding
-`sol.yml` -- which is what `sol up` uses. To build one image by hand:
+`sol.yml` -- which is what `sol local deploy` uses. To build one image by hand:
 
 ```bash
 docker build -f app/payments/charge_svc/Dockerfile -t charge-svc .
 ```
 
-`sol up` copies this root into a temporary build context first (excluding
+`sol local deploy` copies this root into a temporary build context first (excluding
 `_build/` and `.git/`, as `.dockerignore` does). Symlinks are copied as
 symlinks, exactly as Docker itself treats them: a link is never followed, so a
 link that points outside the workspace stays a link rather than importing the
