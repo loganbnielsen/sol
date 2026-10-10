@@ -710,11 +710,28 @@ type prune_target =
   ; name : string
   }
 
+(* Why Sol will not remove a surplus workload it looked at. Only [Live_unobservable]
+   means Sol does not know whether the recorded object is still live, so a caller
+   reconciling removals must not advance past it; the others mean the recorded object is
+   gone, absent, or was never Sol's, so nothing is left to authorize. *)
+type unowned_reason =
+  | No_recorded_uid
+  | Live_uid_differs
+  | Live_absent
+  | Live_unobservable of string
+
 (* A surplus workload Sol will not remove because it cannot prove it owns it. *)
 type unowned_workload =
   { identity : workload_identity
-  ; reason : string
+  ; reason : unowned_reason
   }
+
+let unowned_reason_to_string = function
+  | No_recorded_uid -> "Sol recorded no UID for it"
+  | Live_uid_differs -> "its live UID differs from the UID Sol recorded"
+  | Live_absent -> "it is no longer present"
+  | Live_unobservable reason -> reason
+;;
 
 type prune_report =
   { removed : prune_target list
@@ -846,7 +863,7 @@ let prune_workloads
   : (prune_report, string) result
   =
   let live_names = List.map (fun ((id : workload_identity), _) -> id.name) live in
-  let classify (id : workload_identity) : (workload_identity, string) result =
+  let classify (id : workload_identity) : (workload_identity, unowned_reason) result =
     let ownership = ownership_identity id in
     let recorded = Sol_cli_workload_ownership.recorded_uid evidence ownership in
     match Sol_cli_workload_ownership.observe ~ctx ownership with
@@ -856,10 +873,11 @@ let prune_workloads
       else
         Error
           (match recorded with
-           | None -> "Sol recorded no UID for it"
-           | Some _ -> "its live UID differs from the UID Sol recorded")
-    | Sol_cli_workload_ownership.Live_absent -> Error "it is no longer present"
-    | Sol_cli_workload_ownership.Live_unobservable reason -> Error reason
+           | None -> No_recorded_uid
+           | Some _ -> Live_uid_differs)
+    | Sol_cli_workload_ownership.Live_absent -> Error Live_absent
+    | Sol_cli_workload_ownership.Live_unobservable reason ->
+      Error (Live_unobservable reason)
   in
   let removable, unowned =
     List.fold_left
@@ -904,7 +922,7 @@ let unowned_message (unowned : unowned_workload list) =
                (kind_resource u.identity.kind)
                u.identity.namespace
                u.identity.name
-               u.reason)
+               (unowned_reason_to_string u.reason))
           unowned))
 ;;
 

@@ -108,8 +108,10 @@ sol deploy prod/aws/us-east-1                   # reconcile infrastructure and w
 - `sol deploy` applies fresh Terraform plans for the existing roots, verifies the platform, then
   reconciles configured authorization, workloads, and removals. A service removed from the
   declarations is removed from the cluster only while its live object's UID still matches the UID
-  Sol recorded at apply. Uncertain state, unsafe grant revocation, and unknown Kubernetes
-  ownership fail closed.
+  Sol recorded at apply. If an owned removal cannot be completed — unreadable evidence, an
+  unobservable live set, or a failed delete — the deploy fails before advancing the release record,
+  so the next deploy retries with the same evidence. Uncertain state, unsafe grant revocation, and
+  unknown Kubernetes ownership fail closed.
 - `sol deploy` re-applies every declared workload, but each workload carries its own immutable
   identity; changing one workload's image or configuration does not change the Pod template of an
   unchanged one, so it does not roll out.

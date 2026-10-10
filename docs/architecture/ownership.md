@@ -55,8 +55,9 @@ labels only select which objects to look at:
 - `Sol_cli_deploy_run.remove_surplus_workloads` (`sol deploy`) — after a
   whole-target apply, a live workspace workload the plan no longer declares is
   deleted only while its live UID equals the UID the superseded release
-  recorded. An unreadable record or an unobservable live set removes nothing and
-  says so.
+  recorded. An unreadable record, an unobservable live set or a failed delete
+  fails the deploy *before* the new release is recorded, so the superseded
+  release's evidence is not discarded and the next deploy can retry.
 - `Sol_cli_rollback.prune_workloads` — a surplus workload is deleted only while
   its live UID equals the UID the superseded release recorded. An auxiliary the
   workload realizes (ServiceAccount, ConfigMap `-env`, NetworkPolicy, Service,

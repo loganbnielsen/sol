@@ -116,10 +116,18 @@ type prune_target =
   ; name : string
   }
 
+type unowned_reason =
+  | No_recorded_uid
+  | Live_uid_differs
+  | Live_absent
+  | Live_unobservable of string
+
 type unowned_workload =
   { identity : workload_identity
-  ; reason : string
+  ; reason : unowned_reason
   }
+
+val unowned_reason_to_string : unowned_reason -> string
 
 type prune_report =
   { removed : prune_target list

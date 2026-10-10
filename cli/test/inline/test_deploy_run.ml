@@ -100,7 +100,11 @@ let temp_dir () =
   dir
 ;;
 
-let with_context ?(migrations = []) f =
+let with_context
+      ?(migrations = [])
+      ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
+      f
+  =
   let root = temp_dir () in
   let cwd = Sys.getcwd () in
   Fun.protect
@@ -138,7 +142,7 @@ let with_context ?(migrations = []) f =
          ; sha = "abc123"
          ; registry = "registry.example.com"
          ; facts
-         ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
+         ; secret_backend
          ; emit_plan_to = None
          ; target_cfg = config.target
          ; resolved_config = config
@@ -224,7 +228,20 @@ let read_file path =
   | Sys_error _ -> ""
 ;;
 
-let fake_kubectl ~dir =
+let fake_kubectl ~dir ?live_listing () =
+  let live_case =
+    match live_listing with
+    | None -> ""
+    | Some json ->
+      Printf.sprintf
+        {|case " $* " in
+  *" get deployment -A "*) printf '%%s' '%s' ;;
+  *" get rollout -A "*) printf '%%s' '{"items":[]}' ;;
+  *" get cronjob -A "*) printf '%%s' '{"items":[]}' ;;
+esac
+|}
+        json
+  in
   Printf.sprintf
     {|#!/bin/sh
 echo "$*" >> %s/calls.log
@@ -234,7 +251,7 @@ previous=""
 for a in "$@"; do
   if [ "$previous" = "-f" ]; then file="$a"; fi
   case "$a" in
-    sol-boundary-lease-*|sol-deploy-state-*|sol-release-current-*) name="$a" ;;
+    sol-boundary-lease-*|sol-deploy-state-*|sol-release-current-*|sol-release-r-*) name="$a" ;;
   esac
   previous="$a"
 done
@@ -256,8 +273,9 @@ case " $* " in
     ;;
 esac
 case " $* " in
-  *" get secret sol-secrets "*) printf '{"data":{"POSTGRES_URL":"postgres://user:pass@host/db","SOL_API_KEY":"test"}}'; exit 0 ;;
+  *" get secret "*) printf '{"data":{"POSTGRES_URL":"postgres://user:pass@host/db","SOL_API_KEY":"test"}}'; exit 0 ;;
 esac
+%s
 case "$name" in
   sol-boundary-lease-*)
     if [ -f %s/lease.json ]; then
@@ -271,6 +289,10 @@ case "$name" in
     printf 'Error from server (NotFound): configmaps "current" not found\n' >&2
     exit 1
     ;;
+  sol-release-r-*)
+    printf 'Error from server (NotFound): configmaps "release" not found\n' >&2
+    exit 1
+    ;;
   sol-deploy-state-*) printf 'alpha\nbravo' ;;
 esac
 exit 0
@@ -278,16 +300,17 @@ exit 0
     dir
     dir
     dir
+    live_case
     dir
     dir
 ;;
 
-let with_fake_kubectl f =
+let with_fake_kubectl ?live_listing f =
   let dir = Filename.temp_file "sol-fake-kubectl-" "" in
   Sys.remove dir;
   Unix.mkdir dir 0o755;
   let bin = Filename.concat dir "kubectl" in
-  write_file bin (fake_kubectl ~dir);
+  write_file bin (fake_kubectl ~dir ?live_listing ());
   Unix.chmod bin 0o755;
   let old_path =
     try Sys.getenv "PATH" with
@@ -409,7 +432,24 @@ let deployment_listing_item ~name ~namespace ~uid =
 
 let listing items = Printf.sprintf {|{"items":[%s]}|} (String.concat "," items)
 
-let surplus_kubectl_script ~current ~record ~deployments ~deletes ~listing_failure =
+let surplus_kubectl_script
+      ~current
+      ~record
+      ~deployments
+      ~deletes
+      ?(listing_failure = None)
+      ?(current_missing = false)
+      ?(delete_fails_first = false)
+      ?(charge_uid = "uid-recorded")
+      ()
+  =
+  let current_case =
+    if current_missing
+    then
+      "*\" get configmap sol-release-current-\"*) printf 'Error from server (NotFound): \
+       configmaps \"current\" not found\\n' >&2; exit 1 ;;"
+    else Printf.sprintf "*\" get configmap sol-release-current-\"*) cat %s ;;" current
+  in
   let deployments_case =
     match listing_failure with
     | Some message ->
@@ -418,10 +458,20 @@ let surplus_kubectl_script ~current ~record ~deployments ~deletes ~listing_failu
         message
     | None -> Printf.sprintf "*\" get deployment -A \"*) cat %s ;;" deployments
   in
+  let delete_case =
+    if delete_fails_first
+    then
+      Printf.sprintf
+        {|*" delete "*) if [ -f %s ]; then printf '%%s\n' "$*" >> %s ; else : > %s ; printf '%%s\n' 'Error from server: temporarily unavailable' >&2 ; exit 1 ; fi ;;|}
+        (deletes ^ ".marker")
+        deletes
+        (deletes ^ ".marker")
+    else Printf.sprintf {|*" delete "*) printf '%%s\n' "$*" >> %s ;;|} deletes
+  in
   Printf.sprintf
     {|#!/bin/sh
 case " $* " in
-  *" get configmap sol-release-current-"*) cat %s ;;
+  %s
   *" get configmap sol-release-r-"*) cat %s ;;
   %s
   *" get rollout -A "*) printf '%%s' '{"items":[]}' ;;
@@ -429,23 +479,42 @@ case " $* " in
   *jsonpath=*)
     case " $* " in
       *" stale-svc "*) printf '%%s' 'uid-other' ;;
-      *) printf '%%s' 'uid-recorded' ;;
+      *) printf '%%s' '%s' ;;
     esac ;;
-  *" delete "*) printf '%%s\n' "$*" >> %s ;;
+  %s
   *) printf '%%s' '{}' ;;
 esac
 exit 0
 |}
-    current
+    current_case
     record
     deployments_case
-    deletes
+    charge_uid
+    delete_case
 ;;
 
 let recorded_charge_svc uid : Sol_cli_release_id.owned_object =
   { resource = "deployment"; namespace = "myapp-payments"; name = "charge-svc"; uid }
 ;;
 
+let recorded_svc name uid : Sol_cli_release_id.owned_object =
+  { resource = "deployment"; namespace = "myapp-payments"; name; uid }
+;;
+
+let surplus_removal_outcome ~ctx plan =
+  let outcome, reports =
+    Sol_cli_report.collect (fun () ->
+      Sol_cli_deploy_run.remove_surplus_workloads ctx plan)
+  in
+  outcome, String.concat "\n" (List.map snd reports)
+;;
+
+let check_removal_result ~msg expected outcome =
+  Windtrap.equal (Windtrap.result Windtrap.unit Windtrap.string) ~msg expected outcome
+;;
+
+(* Removal succeeds: the UID-matched object and its auxiliary are removed, and the
+   operation reports Ok so the caller may advance the release boundary. *)
 let test_deploy_removes_only_the_uid_matched_surplus () =
   with_context (fun ctx ->
     let dir = temp_dir () in
@@ -473,16 +542,10 @@ let test_deploy_removes_only_the_uid_matched_surplus () =
          ]);
     let deletes = Filename.concat dir "deletes.log" in
     with_scripted_kubectl
-      (surplus_kubectl_script
-         ~current
-         ~record
-         ~deployments
-         ~deletes
-         ~listing_failure:None)
+      (surplus_kubectl_script ~current ~record ~deployments ~deletes ())
       (fun () ->
-         ignore
-           (Sol_cli_report.collect (fun () ->
-              Sol_cli_deploy_run.remove_surplus_workloads ctx (plan [])));
+         let outcome, _ = surplus_removal_outcome ~ctx (plan []) in
+         check_removal_result ~msg:"a complete removal returns Ok" (Ok ()) outcome;
          let log = read_file deletes in
          Windtrap.equal
            Windtrap.bool
@@ -505,7 +568,10 @@ let test_deploy_removes_only_the_uid_matched_surplus () =
            (Sol_cli_string.contains ~needle:"stale-svc" log)))
 ;;
 
-let test_deploy_defers_removal_when_the_live_set_is_unobservable () =
+(* An unobservable live set is not a completed reconciliation: the operation errors, so
+   the caller must not advance the release boundary past an object whose ownership Sol
+   could not check. *)
+let test_deploy_fails_when_the_live_set_is_unobservable () =
   with_context (fun ctx ->
     let dir = temp_dir () in
     let evidence_plan =
@@ -524,23 +590,278 @@ let test_deploy_defers_removal_when_the_live_set_is_unobservable () =
          ~record
          ~deployments:""
          ~deletes
-         ~listing_failure:(Some "Unable to connect to the server"))
+         ~listing_failure:(Some "Unable to connect to the server")
+         ())
       (fun () ->
-         let (), lines =
-           Sol_cli_report.collect (fun () ->
-             Sol_cli_deploy_run.remove_surplus_workloads ctx (plan []))
-         in
-         let joined = String.concat "\n" (List.map snd lines) in
-         Windtrap.equal
-           Windtrap.bool
-           ~msg:"an unobservable live set defers removal and says so"
-           true
-           (Sol_cli_string.contains ~needle:"deferred" joined);
+         let outcome, _ = surplus_removal_outcome ~ctx (plan []) in
+         (match outcome with
+          | Ok () -> Windtrap.fail "an unobservable live set must fail the reconciliation"
+          | Error message ->
+            Windtrap.equal
+              Windtrap.bool
+              ~msg:"the failure names the live set it could not observe"
+              true
+              (Sol_cli_string.contains ~needle:"could not be observed" message);
+            Windtrap.equal
+              Windtrap.bool
+              ~msg:"the failure says the release boundary was left unchanged"
+              true
+              (Sol_cli_string.contains
+                 ~needle:"release boundary was left unchanged"
+                 message));
          Windtrap.equal
            Windtrap.string
            ~msg:"nothing is deleted when the live set cannot be observed"
            ""
            (read_file deletes)))
+;;
+
+(* A surplus object Sol cannot prove it owns is retained and reported, not a reconciliation
+   failure: there is no recorded object left to authorize a removal, so nothing is lost by
+   advancing. *)
+let test_deploy_completes_when_surplus_is_not_provably_owned () =
+  with_context (fun ctx ->
+    let dir = temp_dir () in
+    let evidence_plan =
+      plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
+    in
+    let current, record =
+      release_configmap_files
+        ~dir
+        ~evidence_plan
+        ~owned:[ recorded_charge_svc "uid-recorded" ]
+    in
+    let deployments = Filename.concat dir "deployments.json" in
+    write_file
+      deployments
+      (listing
+         [ deployment_listing_item
+             ~name:"charge-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-live-other"
+         ; deployment_listing_item
+             ~name:"stale-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-other"
+         ]);
+    let deletes = Filename.concat dir "deletes.log" in
+    with_scripted_kubectl
+      (surplus_kubectl_script
+         ~current
+         ~record
+         ~deployments
+         ~deletes
+         ~charge_uid:"uid-live-other"
+         ())
+      (fun () ->
+         let outcome, reports = surplus_removal_outcome ~ctx (plan []) in
+         check_removal_result
+           ~msg:"surplus Sol cannot prove it owns is retained, not fatal"
+           (Ok ())
+           outcome;
+         let log = read_file deletes in
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"a differing live UID is retained"
+           false
+           (Sol_cli_string.contains ~needle:"charge-svc" log);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"no recorded UID is retained"
+           false
+           (Sol_cli_string.contains ~needle:"stale-svc" log);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"both are reported for explicit adoption"
+           true
+           (Sol_cli_string.contains
+              ~needle:"its live UID differs from the UID Sol recorded"
+              reports
+            && Sol_cli_string.contains ~needle:"Sol recorded no UID for it" reports)))
+;;
+
+(* A first deployment has no prior release to read and no boundary to preserve, so it must
+   not fail merely because no recorded evidence exists. *)
+let test_deploy_completes_on_a_first_deployment () =
+  with_context (fun ctx ->
+    let dir = temp_dir () in
+    let deployments = Filename.concat dir "deployments.json" in
+    write_file
+      deployments
+      (listing
+         [ deployment_listing_item
+             ~name:"stale-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-other"
+         ]);
+    let deletes = Filename.concat dir "deletes.log" in
+    with_scripted_kubectl
+      (surplus_kubectl_script
+         ~current:""
+         ~record:""
+         ~deployments
+         ~deletes
+         ~current_missing:true
+         ())
+      (fun () ->
+         let outcome, _ = surplus_removal_outcome ~ctx (plan []) in
+         check_removal_result
+           ~msg:"a first deployment with no prior evidence completes"
+           (Ok ())
+           outcome;
+         Windtrap.equal
+           Windtrap.string
+           ~msg:"nothing is deleted without recorded ownership"
+           ""
+           (read_file deletes)))
+;;
+
+(* A partial prune failure errors, so the boundary is not advanced. A retry re-reads the
+   same evidence, observes the objects that remain, and completes the removal. *)
+let test_deploy_removal_is_retryable_after_a_partial_failure () =
+  with_context (fun ctx ->
+    let dir = temp_dir () in
+    let evidence_plan =
+      plan
+        [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc
+        ; spec ~domain:"payments" ~name:"stale_svc" ~k8s:"stale-svc" Svc
+        ]
+    in
+    let current, record =
+      release_configmap_files
+        ~dir
+        ~evidence_plan
+        ~owned:
+          [ recorded_svc "charge-svc" "uid-recorded"
+          ; recorded_svc "stale-svc" "uid-other"
+          ]
+    in
+    let deployments = Filename.concat dir "deployments.json" in
+    write_file
+      deployments
+      (listing
+         [ deployment_listing_item
+             ~name:"charge-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-recorded"
+         ; deployment_listing_item
+             ~name:"stale-svc"
+             ~namespace:"myapp-payments"
+             ~uid:"uid-other"
+         ]);
+    let deletes = Filename.concat dir "deletes.log" in
+    with_scripted_kubectl
+      (surplus_kubectl_script
+         ~current
+         ~record
+         ~deployments
+         ~deletes
+         ~delete_fails_first:true
+         ())
+      (fun () ->
+         let first, _ = surplus_removal_outcome ~ctx (plan []) in
+         (match first with
+          | Ok () -> Windtrap.fail "a failed delete must fail the reconciliation"
+          | Error message ->
+            Windtrap.equal
+              Windtrap.bool
+              ~msg:"the failure names the unfinished removal"
+              true
+              (Sol_cli_string.contains ~needle:"surplus workload removal failed" message));
+         let second, _ = surplus_removal_outcome ~ctx (plan []) in
+         check_removal_result
+           ~msg:"a retry with the same evidence completes the removal"
+           (Ok ())
+           second;
+         let log = read_file deletes in
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the retry removes the workload whose delete failed"
+           true
+           (Sol_cli_string.contains
+              ~needle:"delete deployment charge-svc -n myapp-payments"
+              log);
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"and the workload that was already removable"
+           true
+           (Sol_cli_string.contains
+              ~needle:"delete deployment stale-svc -n myapp-payments"
+              log)))
+;;
+
+(* The lifecycle half: an incomplete removal fails the deploy before the new release is
+   recorded (report_success runs only after recording), so the superseded release stays
+   authoritative and the next deploy retries with its recorded UID evidence. *)
+let test_lifecycle_fails_before_recording_when_removal_is_incomplete () =
+  with_fake_kubectl (fun ~calls:_ ->
+    with_context ~secret_backend:Sol_cli_manifest.Kubernetes_live (fun ctx ->
+      let reported = ref false in
+      let plan =
+        plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
+      in
+      let outcome =
+        Sol_cli_deploy_run.apply
+          ctx
+          ~present_plan:(fun _ -> Ok ())
+          ~effective_access:(fun () -> Ok ())
+          ~on_substrate_refused:(fun _ -> ())
+          ~confirm_group_change:true
+          ~push_events:(fun _ -> Windtrap.fail "an incomplete removal emitted events")
+          ~report_success:(fun _ _ -> reported := true)
+          plan
+      in
+      (match outcome with
+       | Ok () -> Windtrap.fail "an incomplete removal must fail the deploy"
+       | Error message ->
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:
+             (Printf.sprintf
+                "the failure names the unobservable live set and the unchanged boundary \
+                 [%s]"
+                message)
+           true
+           (Sol_cli_string.contains ~needle:"could not be observed" message
+            && Sol_cli_string.contains
+                 ~needle:"release boundary was left unchanged"
+                 message));
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the release was not recorded, so no success was reported"
+        false
+        !reported))
+;;
+
+(* The complementary lifecycle half: when the removal step completes, the deploy records
+   the new release and reports success. *)
+let test_lifecycle_advances_when_removal_completes () =
+  with_fake_kubectl ~live_listing:{|{"items":[]}|} (fun ~calls:_ ->
+    with_context ~secret_backend:Sol_cli_manifest.Kubernetes_live (fun ctx ->
+      let reported = ref false in
+      let plan =
+        plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
+      in
+      let outcome =
+        Sol_cli_deploy_run.apply
+          ctx
+          ~present_plan:(fun _ -> Ok ())
+          ~effective_access:(fun () -> Ok ())
+          ~on_substrate_refused:(fun _ -> ())
+          ~confirm_group_change:true
+          ~push_events:(fun _ -> ())
+          ~report_success:(fun _ _ -> reported := true)
+          plan
+      in
+      check_removal_result
+        ~msg:"a completed removal lets the whole-target deploy finish"
+        (Ok ())
+        outcome;
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the new release was recorded and reported"
+        true
+        !reported))
 ;;
 
 let consumer_group_exn s =
@@ -819,8 +1140,28 @@ let%test "removal: a surplus workload is removed only on its recorded UID match"
   test_deploy_removes_only_the_uid_matched_surplus ()
 ;;
 
-let%test "removal: an unobservable live set defers removal" =
-  test_deploy_defers_removal_when_the_live_set_is_unobservable ()
+let%test "removal: an unobservable live set fails the reconciliation" =
+  test_deploy_fails_when_the_live_set_is_unobservable ()
+;;
+
+let%test "removal: unowned surplus is retained and reconciliation completes" =
+  test_deploy_completes_when_surplus_is_not_provably_owned ()
+;;
+
+let%test "removal: a first deployment needs no prior ownership evidence" =
+  test_deploy_completes_on_a_first_deployment ()
+;;
+
+let%test "removal: a partial prune failure is retryable with the same evidence" =
+  test_deploy_removal_is_retryable_after_a_partial_failure ()
+;;
+
+let%test "removal: an incomplete removal fails before the release is recorded" =
+  test_lifecycle_fails_before_recording_when_removal_is_incomplete ()
+;;
+
+let%test "removal: a completed removal lets the release advance" =
+  test_lifecycle_advances_when_removal_completes ()
 ;;
 
 let%test "lifecycle: a failed apply does not report success" =

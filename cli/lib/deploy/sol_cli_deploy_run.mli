@@ -58,7 +58,10 @@ val deploy_events
   -> Sol_cli_deployment_plan.t
   -> Sol_cli_deploy_event.t list
 
-val remove_surplus_workloads : context -> Sol_cli_deployment_plan.t -> unit
+val remove_surplus_workloads
+  :  context
+  -> Sol_cli_deployment_plan.t
+  -> (unit, string) result
 
 val warn_not_owned_declared
   :  cluster:Sol_cli_kube_destination.context
