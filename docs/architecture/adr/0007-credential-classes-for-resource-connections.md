@@ -140,11 +140,13 @@ cloud/cluster apply (database + network path)
   → workloads                      ← DML
 ```
 
-**The setup step and the workloads run in the same namespace under the same NetworkPolicy.** So there
-is no case where a workload can reach the database and the setup step cannot: if the network path is
-not ready, neither can connect, and the setup step fails closed *before* any workload starts. The
-constraint is real but it is the same constraint the workloads already carry — which is why the step
-belongs after prerequisites rather than beside the cloud apply.
+**The setup Job runs under the same NetworkPolicy as the workloads it precedes.** The egress rule that
+permits the database is the one created in the prerequisites phase, and the Job is subject to it exactly
+as a workload is — it is not exempt and does not carry a rule of its own. Consequently there is no case
+where a workload can reach the database and the setup step cannot: if the network path is not ready,
+neither can connect, and the setup step fails closed *before* any workload starts. The constraint is real
+but it is the same constraint the workloads already carry — which is why the step belongs after
+prerequisites rather than beside the cloud apply.
 
 ## Consequences
 
@@ -158,6 +160,21 @@ belongs after prerequisites rather than beside the cloud apply.
 - **The plan gains a class refusal**, not a new declaration.
 - **The migration Job's inputs change** from the master `POSTGRES_URL` to the DDL credential, and
   `default_secrets`' `POSTGRES_URL` entry goes away.
+- **Sequencing: 2a → 2c → 2b.** PR 2a (model) lands first as a **pure refactor** — no behavior change, so
+  existing tests pass unchanged. **2c (the setup step) lands before 2b (the delivery switch), because 2b
+  consumes the roles 2c creates**: 2b without 2c fails at plan with no path to succeed, which is a broken
+  intermediate state rather than a stack. 2c is additive — nothing consumes the roles yet, so the security
+  property is unchanged until 2b — and **2c must be verified end-to-end on a target before 2b opens**, so
+  that 2b starts from "the roles exist and work". If 2c proves infeasible, 2a remains useful, 2b never
+  ships, and the fallback decision is made explicitly.
+
+  The split is not process for its own sake: it lets each change be reverted independently. If 2c is
+  infeasible, nothing landed a half-delivered state; if 2b's switch reveals an untraced consumer path, 2a
+  and 2c are still correct.
+
+  Review lens per PR: **2a** — no behavior change; if anything differs, it was not a refactor. **2c** — the
+  five conditions in §6, which are its review criteria. **2b** — criterion 19 (credential class isolation)
+  as the enforcement test, with "what does this delete?" as the discipline.
 
 ## Alternatives considered
 
