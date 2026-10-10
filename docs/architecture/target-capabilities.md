@@ -159,11 +159,16 @@ natural misreading and it breaks cross-namespace consumption.
 
 Three cases the derivation makes precise, because each one decides whether a deploy can proceed.
 
-**Two `postgres` resources in one workspace, one target.** `has_postgres` is an existence check
-(`List.exists`), so the derivation still provisions exactly one database while both resources
-require `database.connection` and therefore both project `POSTGRES_URL`. **Plan refuses**, naming
-the second resource, until the workspace drops to one `postgres` resource — or the capability
-grows an env-var mapping, which is the future work §3.1 defers.
+**Two `postgres` resources consumed by one target.** The refusal is **per target, not per
+workspace**: it fires when *this target's* unit set consumes more than one distinct `postgres`
+resource, because those units would project two different databases into the same `POSTGRES_URL`.
+A workspace declaring `app_db` and `analytics_db` is legitimate when target A consumes only
+`app_db` and target B only `analytics_db` — both targets pass, and neither is refused for the
+other's resource. `has_postgres` — the workspace-wide `List.exists` that drives `create_rds` —
+answers only *whether a provisioner is configured at all*, and must not be reused as the refusal,
+or a legitimate multi-target workspace is refused for workspace state rather than target state.
+Plan refuses across the offending target, naming the second resource, until that target drops to
+one `postgres` resource or the capability grows an env-var mapping (§3.1).
 
 **A non-production profile.** `create_rds = has_postgres` is profile-independent, so a dev target
 whose workspace declares a `postgres` resource still provisions one. The profile only decides
@@ -175,6 +180,11 @@ resource in the workspace, and no `capabilities.database.connection` at either l
 fails** with a message naming the two ways to satisfy it: declare a `postgres` resource (which
 makes the workspace's provisioner bring one up), or bind the capability to an external authority
 at the environment or target level. It never proceeds to deploy and fails later on a missing key.
+
+**The plan is a gate, not a hint.** `sol deploy` builds the plan first (`build_plan` in
+`cmd_deploy.ml`) and returns its error before the environment stage, destination resolution, or
+any apply — so a refused plan cannot be applied past, and every refusal above is enforced on the
+apply path, not only under `sol plan`.
 
 ## 4. Delivery quadrants
 
