@@ -40,9 +40,11 @@ val local_development_spec
    Sol-managed unit keys, apply namespace + prerequisites, wait for external Secrets
    to materialize, then apply the workload. *)
 val apply_workload_phased
-  :  ctx:Sol_cli_kube_destination.context
+  :  ?eso_timeout_s:float
+  -> ctx:Sol_cli_kube_destination.context
   -> spec:Sol_cli_deployment_plan.service_spec
   -> bundle:Sol_cli_manifest.bundle
+  -> unit
   -> (unit, string) Stdlib.result
 
 (* Wait for an applied workload to become ready. A CronJob is applied only. *)

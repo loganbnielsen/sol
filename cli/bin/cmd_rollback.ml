@@ -27,7 +27,7 @@ let apply_specs ~ensure_held ~ctx ~local ~release specs =
         ~release_id:release_id_t
         spec
     in
-    let* () = Sol_cli_executor.apply_workload_phased ~ctx ~spec ~bundle in
+    let* () = Sol_cli_executor.apply_workload_phased ~ctx ~spec ~bundle () in
     (* The boundary lease TTL is 300s; heartbeat before the bounded rollout wait. *)
     let* () = ensure_held () in
     let* () = Sol_cli_executor.wait_for_workload_ready ~ctx ~spec in

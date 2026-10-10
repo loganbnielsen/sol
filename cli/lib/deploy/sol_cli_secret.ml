@@ -515,7 +515,165 @@ let json_string key fields =
   | _ -> None
 ;;
 
-let verify_external_secret_ready ~ctx (spec : Sol_cli_deployment_plan.service_spec) =
+(* One interpreter for the ESO condition, shared by the deploy gate and `sol secret
+   status`, so the two can never disagree. External Secrets Operator's
+   ExternalSecretStatusCondition carries only type/status/reason/message/lastTransitionTime
+   (verified against the upstream API through v0.20 and the current v1 spec): it has no
+   observedGeneration, so a Ready condition cannot be tied to metadata.generation, and that
+   field must not be required. *)
+type eso_state =
+  | Eso_synced of
+      { generation : string option
+      ; synced_version : string option
+      ; refresh_time : string option
+      }
+  | Eso_not_ready of string
+  | Eso_stale_generation of
+      { generation : string
+      ; observed : string
+      }
+
+let eso_state_of_json json =
+  let root = json_object json in
+  let metadata =
+    json_object (Option.value (List.assoc_opt "metadata" root) ~default:`Null)
+  in
+  let generation = json_string "generation" metadata in
+  let status = json_object (Option.value (List.assoc_opt "status" root) ~default:`Null) in
+  let conditions =
+    match List.assoc_opt "conditions" status with
+    | Some (`List rows) -> rows
+    | _ -> []
+  in
+  match
+    conditions
+    |> List.map json_object
+    |> List.find_opt (fun fields -> json_string "type" fields = Some "Ready")
+  with
+  | None -> Eso_not_ready "Ready condition absent"
+  | Some condition ->
+    let state = json_string "status" condition in
+    let reason = json_string "reason" condition in
+    let observed = json_string "observedGeneration" condition in
+    if state <> Some "True" || reason <> Some "SecretSynced"
+    then Eso_not_ready (Option.value reason ~default:"not ready")
+    else (
+      match generation, observed with
+      | Some generation, Some observed when not (String.equal generation observed) ->
+        Eso_stale_generation { generation; observed }
+      | _ ->
+        Eso_synced
+          { generation
+          ; synced_version = json_string "syncedResourceVersion" status
+          ; refresh_time = json_string "refreshTime" status
+          })
+;;
+
+let eso_sync_timeout_s = 150.
+let eso_sync_poll_s = 2.
+
+(* ESO sets status.syncedResourceVersion to "<metadata.generation>-<hash>" on each
+   successful sync, and only writes it when the object changed (its own shouldRefresh
+   compares the two), so a matching generation means ESO processed the spec we applied and
+   a periodic refresh cannot produce that value. The format is an implementation detail
+   rather than a documented API guarantee, so it is a best-effort signal: absent,
+   unrecognized, or not advanced within the bound, we proceed on Ready=True/SecretSynced
+   and warn. This never fails closed on the format. *)
+let synced_version_matches ~generation synced_version =
+  match generation, synced_version with
+  | Some generation, Some version ->
+    Some
+      (Option.is_some
+         (Sol_cli_string.strip_prefix_opt ~prefix:(generation ^ "-") version))
+  | _ -> None
+;;
+
+let wait_for_external_secret_sync ~timeout_s ~poll_s ~ctx ~namespace ~external_name =
+  let deadline = Unix.gettimeofday () +. timeout_s in
+  let warn_unverified reason =
+    Sol_cli_report.warn
+      "ESO did not publish a generation-bound synced version for %s/%s (%s); proceeding \
+       on Ready+SecretSynced without per-spec freshness verification"
+      namespace
+      external_name
+      reason
+  in
+  let rec poll () =
+    let* output =
+      Sol_cli_kubectl.get_raw
+        ~ctx
+        ~args:[ "get"; "externalsecret"; external_name; "-n"; namespace; "-o"; "json" ]
+      |> Result.map_error (fun error ->
+        Printf.sprintf
+          "could not read ExternalSecret %s/%s: %s"
+          namespace
+          external_name
+          (Sol_cli_process.error_to_string error))
+    in
+    let* external_secret =
+      Sol_cli_json.decode
+        ~what:(Printf.sprintf "ExternalSecret %s/%s" namespace external_name)
+        output.Sol_cli_process.stdout
+    in
+    let expired () = Unix.gettimeofday () >= deadline in
+    match eso_state_of_json external_secret with
+    | Eso_not_ready reason ->
+      if expired ()
+      then
+        Error
+          (Printf.sprintf
+             "ExternalSecret %s/%s is not SecretSynced (%s)"
+             namespace
+             external_name
+             reason)
+      else (
+        Unix.sleepf poll_s;
+        poll ())
+    | Eso_stale_generation { generation; observed } ->
+      if expired ()
+      then
+        Error
+          (Printf.sprintf
+             "ESO condition for %s/%s is stale for metadata generation %s (observed %s)"
+             namespace
+             external_name
+             generation
+             observed)
+      else (
+        Unix.sleepf poll_s;
+        poll ())
+    | Eso_synced { generation; synced_version; refresh_time = _ } ->
+      (match synced_version_matches ~generation synced_version with
+       | Some true -> Ok ()
+       | Some false ->
+         if expired ()
+         then (
+           warn_unverified
+             (Printf.sprintf
+                "syncedResourceVersion %s has not reached generation %s"
+                (Option.value synced_version ~default:"unknown")
+                (Option.value generation ~default:"unknown"));
+           Ok ())
+         else (
+           Unix.sleepf poll_s;
+           poll ())
+       | None ->
+         warn_unverified
+           (match generation, synced_version with
+            | _, None -> "status.syncedResourceVersion is absent"
+            | None, _ -> "metadata.generation is absent"
+            | Some _, Some _ -> "the synced version is not a generation prefix");
+         Ok ())
+  in
+  poll ()
+;;
+
+let verify_external_secret_ready
+      ?(timeout_s = eso_sync_timeout_s)
+      ?(poll_s = eso_sync_poll_s)
+      ~ctx
+      (spec : Sol_cli_deployment_plan.service_spec)
+  =
   let external_keys =
     spec.secret_sources
     |> List.filter_map (fun (key, source) ->
@@ -529,97 +687,8 @@ let verify_external_secret_ready ~ctx (spec : Sol_cli_deployment_plan.service_sp
     let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
     let unit_name = Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name in
     let external_name = Sol_cli_manifest.external_secret_name unit_name in
-    let* waited =
-      Sol_cli_kubectl.run
-        ~timeout_s:150.
-        ~ctx
-        [ "wait"
-        ; "--for=condition=Ready"
-        ; "externalsecret/" ^ external_name
-        ; "-n"
-        ; namespace
-        ; "--timeout=120s"
-        ]
-      |> Result.map_error (fun error ->
-        Printf.sprintf
-          "ExternalSecret %s/%s did not become Ready: %s"
-          namespace
-          external_name
-          (Sol_cli_process.error_to_string error))
-    in
-    let _ = waited in
-    let* output =
-      Sol_cli_kubectl.get_raw
-        ~ctx
-        ~args:[ "get"; "externalsecret"; external_name; "-n"; namespace; "-o"; "json" ]
-      |> Result.map_error (fun error ->
-        Printf.sprintf
-          "could not read ExternalSecret %s/%s after Ready: %s"
-          namespace
-          external_name
-          (Sol_cli_process.error_to_string error))
-    in
-    let* external_secret =
-      Sol_cli_json.decode
-        ~what:(Printf.sprintf "ExternalSecret %s/%s" namespace external_name)
-        output.Sol_cli_process.stdout
-    in
-    let root = json_object external_secret in
-    let metadata =
-      json_object (Option.value (List.assoc_opt "metadata" root) ~default:`Null)
-    in
-    let generation = json_string "generation" metadata in
-    let status =
-      json_object (Option.value (List.assoc_opt "status" root) ~default:`Null)
-    in
-    let conditions =
-      match List.assoc_opt "conditions" status with
-      | Some (`List rows) -> rows
-      | _ -> []
-    in
-    let ready =
-      conditions
-      |> List.map json_object
-      |> List.find_opt (fun fields -> json_string "type" fields = Some "Ready")
-    in
     let* () =
-      match ready with
-      | None -> Error "ESO reported Ready but returned no Ready condition"
-      | Some condition ->
-        let state = json_string "status" condition in
-        let reason = json_string "reason" condition in
-        let observed = json_string "observedGeneration" condition in
-        if state <> Some "True" || reason <> Some "SecretSynced"
-        then
-          Error
-            (Printf.sprintf
-               "ESO condition for %s/%s is not SecretSynced (status=%s reason=%s)"
-               namespace
-               external_name
-               (Option.value state ~default:"unknown")
-               (Option.value reason ~default:"unknown"))
-        else if
-          (* External Secrets Operator's ExternalSecretStatusCondition carries only
-             type/status/reason/message/lastTransitionTime — it does not publish an
-             observedGeneration (verified against the upstream API through v0.20 and
-             the current v1 spec). A Ready condition therefore cannot be tied to the
-             live metadata.generation, and requiring that field would fail every
-             deploy. Compare the generations only when ESO does supply one, so the
-             check is dormant today and engages if a future ESO adds the field. *)
-          List.mem_assoc "observedGeneration" condition
-          && Option.fold
-               ~none:false
-               ~some:(fun generation -> observed <> Some generation)
-               generation
-        then
-          Error
-            (Printf.sprintf
-               "ESO condition for %s/%s is stale for metadata generation %s (observed %s)"
-               namespace
-               external_name
-               (Option.value generation ~default:"unknown")
-               (Option.value observed ~default:"unknown"))
-        else Ok ()
+      wait_for_external_secret_sync ~timeout_s ~poll_s ~ctx ~namespace ~external_name
     in
     let* materialized =
       get_named_secret_json
@@ -672,63 +741,34 @@ let external_secret_status ~ctx ~namespace ~unit_name ~expected_keys =
            ~what:(Printf.sprintf "ExternalSecret %s/%s" namespace name)
            raw
        in
-       let root = json_object json in
-       let metadata =
-         json_object (Option.value (List.assoc_opt "metadata" root) ~default:`Null)
-       in
-       let status =
-         json_object (Option.value (List.assoc_opt "status" root) ~default:`Null)
-       in
-       let conditions =
-         match List.assoc_opt "conditions" status with
-         | Some (`List rows) -> rows
-         | _ -> []
-       in
-       let ready =
-         conditions
-         |> List.map json_object
-         |> List.find_opt (fun fields -> json_string "type" fields = Some "Ready")
-       in
-       let synced =
-         match ready with
-         | Some fields ->
-           json_string "status" fields = Some "True"
-           && json_string "reason" fields = Some "SecretSynced"
-           &&
-             (match
-                json_string "generation" metadata, json_string "observedGeneration" fields
-              with
-             | Some generation, Some observed -> generation = observed
-             | _ -> true)
-         | None -> false
-       in
-       if not synced
-       then (
-         let reason =
-           match ready with
-           | Some fields ->
-             Option.value (json_string "reason" fields) ~default:"not ready"
-           | None -> "Ready condition absent"
-         in
-         Ok ("not ready (" ^ reason ^ ")"))
-       else
-         let* materialized = get_named_secret_json ~ctx ~name namespace in
-         let found =
-           materialized
-           |> Option.to_list
-           |> List.concat_map data_keys
-           |> List.map fst
-           |> List.sort_uniq String.compare
-         in
-         let expected = List.sort_uniq String.compare external_keys in
-         if found <> expected
-         then Ok "materialized keys differ from declaration"
-         else (
-           let refreshed = json_string "refreshTime" status in
-           Ok
-             ("ready (SecretSynced"
-              ^ Option.fold ~none:"" ~some:(fun time -> "; refreshed " ^ time) refreshed
-              ^ ")")))
+       (match eso_state_of_json json with
+        | Eso_not_ready reason -> Ok ("not ready (" ^ reason ^ ")")
+        | Eso_stale_generation { generation; observed } ->
+          Ok
+            (Printf.sprintf
+               "not ready (stale for metadata generation %s (observed %s))"
+               generation
+               observed)
+        | Eso_synced { refresh_time; _ } ->
+          let* materialized = get_named_secret_json ~ctx ~name namespace in
+          let found =
+            materialized
+            |> Option.to_list
+            |> List.concat_map data_keys
+            |> List.map fst
+            |> List.sort_uniq String.compare
+          in
+          let expected = List.sort_uniq String.compare external_keys in
+          if found <> expected
+          then Ok "materialized keys differ from declaration"
+          else
+            Ok
+              ("ready (SecretSynced"
+               ^ Option.fold
+                   ~none:""
+                   ~some:(fun time -> "; refreshed " ^ time)
+                   refresh_time
+               ^ ")")))
 ;;
 
 let verify_external_secret_destination ~ctx (spec : Sol_cli_deployment_plan.service_spec) =

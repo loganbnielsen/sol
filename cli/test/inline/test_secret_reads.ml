@@ -52,14 +52,22 @@ if [ "$verb" = "get" ]; then
   case "$kind" in
     externalsecret)
       if [ "$mode" = "eso-ready" ]; then
+        printf '{"metadata":{"generation":2},"status":{"refreshTime":"2026-10-10T12:00:00Z","syncedResourceVersion":"2-abc","conditions":[{"type":"Ready","status":"True","reason":"SecretSynced"}]}}\n'
+        exit 0
+      fi
+      if [ "$mode" = "eso-no-synced-version" ]; then
         printf '{"metadata":{"generation":2},"status":{"refreshTime":"2026-10-10T12:00:00Z","conditions":[{"type":"Ready","status":"True","reason":"SecretSynced"}]}}\n'
+        exit 0
+      fi
+      if [ "$mode" = "eso-stale-version" ]; then
+        printf '{"metadata":{"generation":3},"status":{"refreshTime":"2026-10-10T12:00:00Z","syncedResourceVersion":"2-abc","conditions":[{"type":"Ready","status":"True","reason":"SecretSynced"}]}}\n'
         exit 0
       fi
       if [ "$mode" = "phased-eso-ready" ] || [ "$mode" = "phased-eso-not-synced" ]; then
         state=True
         reason=SecretSynced
         if [ "$mode" = "phased-eso-not-synced" ]; then reason=SecretSyncedError; state=False; fi
-        printf '{"metadata":{"name":"charge-svc-external-secrets","namespace":"payments","uid":"es-uid","generation":2,"labels":{"app.kubernetes.io/managed-by":"sol"}},"spec":{"target":{"name":"charge-svc-external-secrets"}},"status":{"refreshTime":"2026-10-10T12:00:00Z","conditions":[{"type":"Ready","status":"%%s","reason":"%%s","observedGeneration":2}]}}\n' "$state" "$reason"
+        printf '{"metadata":{"name":"charge-svc-external-secrets","namespace":"payments","uid":"es-uid","generation":2,"labels":{"app.kubernetes.io/managed-by":"sol"}},"spec":{"target":{"name":"charge-svc-external-secrets"}},"status":{"refreshTime":"2026-10-10T12:00:00Z","syncedResourceVersion":"2-abc","conditions":[{"type":"Ready","status":"%%s","reason":"%%s"}]}}\n' "$state" "$reason"
         exit 0
       fi
       if [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
@@ -98,7 +106,7 @@ if [ "$verb" = "get" ]; then
         esac
         exit 0
       fi
-      if [ "$mode" = "eso-ready" ] || [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
+      if [ "$mode" = "eso-ready" ] || [ "$mode" = "eso-no-synced-version" ] || [ "$mode" = "eso-stale-version" ] || [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
         if [ "$mode" = "eso-wrong-keys" ]; then
           echo '{"apiVersion":"v1","kind":"Secret","data":{"OTHER_KEY":"c2VjcmV0"}}'
         else
@@ -395,7 +403,10 @@ let test_external_secret_readiness_succeeds () =
 let test_external_secret_readiness_fails_closed mode expected_message =
   with_fake_kubectl ~mode (fun ~calls:_ ~manifests:_ ->
     match
-      Sol_cli_secret.verify_external_secret_ready ~ctx (external_workload_spec ())
+      Sol_cli_secret.verify_external_secret_ready
+        ~timeout_s:0.
+        ~ctx
+        (external_workload_spec ())
     with
     | Ok () -> Windtrap.failf "ESO state %s should fail readiness" mode
     | Error message ->
@@ -404,6 +415,67 @@ let test_external_secret_readiness_fails_closed mode expected_message =
         ~msg:("reports readiness failure for " ^ mode)
         true
         (Sol_cli_string.contains ~needle:expected_message message))
+;;
+
+(* syncedResourceVersion names the generation ESO processed, so a matching one is a
+   verified sync and needs no warning. *)
+let test_external_secret_readiness_verifies_the_generation () =
+  with_fake_kubectl ~mode:"eso-ready" (fun ~calls:_ ~manifests:_ ->
+    let result, reported =
+      Sol_cli_report.collect (fun () ->
+        Sol_cli_secret.verify_external_secret_ready ~ctx (external_workload_spec ()))
+    in
+    (match result with
+     | Ok () -> ()
+     | Error message -> Windtrap.failf "a generation-bound sync was rejected: %s" message);
+    Windtrap.equal
+      Windtrap.int
+      ~msg:"a generation-bound sync needs no freshness warning"
+      0
+      (List.length reported))
+;;
+
+(* The signal is an ESO implementation detail, so its absence must degrade to
+   Ready+SecretSynced with a warning — never a deploy failure. *)
+let test_external_secret_readiness_warns_without_a_synced_version () =
+  with_fake_kubectl ~mode:"eso-no-synced-version" (fun ~calls:_ ~manifests:_ ->
+    let result, reported =
+      Sol_cli_report.collect (fun () ->
+        Sol_cli_secret.verify_external_secret_ready ~ctx (external_workload_spec ()))
+    in
+    (match result with
+     | Ok () -> ()
+     | Error message -> Windtrap.failf "the fallback must not fail the deploy: %s" message);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the fallback warns that freshness was not verified"
+      true
+      (List.exists
+         (fun (_level, text) ->
+            Sol_cli_string.contains ~needle:"without per-spec freshness verification" text)
+         reported))
+;;
+
+let test_external_secret_readiness_warns_when_the_generation_lags () =
+  with_fake_kubectl ~mode:"eso-stale-version" (fun ~calls:_ ~manifests:_ ->
+    let result, reported =
+      Sol_cli_report.collect (fun () ->
+        Sol_cli_secret.verify_external_secret_ready
+          ~timeout_s:0.
+          ~ctx
+          (external_workload_spec ()))
+    in
+    (match result with
+     | Ok () -> ()
+     | Error message -> Windtrap.failf "a lagging generation must not fail: %s" message);
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the fallback names the lagging generation"
+      true
+      (List.exists
+         (fun (_level, text) ->
+            Sol_cli_string.contains ~needle:"has not reached generation" text)
+         reported))
 ;;
 
 let test_unit_set_writes_only_its_unit_secret () =
@@ -578,6 +650,7 @@ let test_phased_apply_waits_for_the_external_secret_before_the_workload () =
         ~ctx
         ~spec:(external_workload_spec ())
         ~bundle:(phased_bundle ~prerequisites:prerequisites_doc ~workload:workload_doc)
+        ()
     with
     | Error message -> Windtrap.failf "synced external Secret deploy failed: %s" message
     | Ok () ->
@@ -607,9 +680,11 @@ let test_phased_apply_blocks_the_workload_when_eso_is_not_synced () =
   with_fake_kubectl ~mode:"phased-eso-not-synced" (fun ~calls:_ ~manifests ->
     match
       Sol_cli_executor.apply_workload_phased
+        ~eso_timeout_s:0.
         ~ctx
         ~spec:(external_workload_spec ())
         ~bundle:(phased_bundle ~prerequisites:prerequisites_doc ~workload:workload_doc)
+        ()
     with
     | Ok () -> Windtrap.fail "a not-synced external Secret must block the workload apply"
     | Error message ->
@@ -733,4 +808,16 @@ let%test
 
 let%test "local development forces every key to Sol-managed" =
   test_local_development_spec_forces_sol_managed ()
+;;
+
+let%test "external Secret readiness verifies the synced generation" =
+  test_external_secret_readiness_verifies_the_generation ()
+;;
+
+let%test "external Secret readiness warns when no synced version is published" =
+  test_external_secret_readiness_warns_without_a_synced_version ()
+;;
+
+let%test "external Secret readiness warns when the generation lags" =
+  test_external_secret_readiness_warns_when_the_generation_lags ()
 ;;
