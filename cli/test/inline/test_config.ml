@@ -2395,3 +2395,200 @@ let%test "target secrets: malformed external refs fail" =
 let%test "target secrets: scalar authority shorthand fails" =
   test_secret_authorities_reject_scalar_shorthand ()
 ;;
+
+(* Resource bindings — docs/architecture/resource-bindings.md. The base workspace declares
+   app_db (postgres); a target-level binding overrides its ownership. *)
+
+let mentions needle text =
+  let n = String.length needle in
+  let t = String.length text in
+  let rec go i =
+    i + n <= t && (String.equal (String.sub text i n) needle || go (i + 1))
+  in
+  go 0
+;;
+
+let load_with_binding body =
+  write_base ();
+  mkdir_p "sol/prod/aws";
+  Targets_fixture.write ~target:"prod/aws/us-east-1" body;
+  Sol_cli_config.load_for_target ~target:"prod/aws/us-east-1"
+;;
+
+let test_external_binding_suppresses_provisioning () =
+  with_temp_dir (fun () ->
+    match
+      load_with_binding
+        {|target:
+  resources:
+    app_db:
+      binding:
+        ownership: external
+        store: vault-production
+        keys:
+          POSTGRES_URL: secret/production/app-db
+|}
+    with
+    | Error error -> Windtrap.fail (Sol_cli_config.error_to_string error)
+    | Ok config ->
+      (match Sol_cli_resource_binding.resolve config with
+       | Error message -> Windtrap.fail message
+       | Ok bindings ->
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"an externally bound database must not also be provisioned"
+           false
+           (Sol_cli_resource_binding.provisions bindings ~typ:"postgres");
+         let store =
+           match Sol_cli_resource_binding.of_type bindings ~typ:"postgres" with
+           | [ binding ] -> binding.store
+           | _ -> None
+         in
+         Windtrap.equal
+           (Windtrap.option Windtrap.string)
+           ~msg:"the external store is resolved"
+           (Some "vault-production")
+           store))
+;;
+
+let test_binding_override_is_atomic () =
+  with_temp_dir (fun () ->
+    (* Environment-level binding, then a target-level one. The target replaces the whole
+       selection: its store is used and the environment's keys do not survive. *)
+    match
+      load_with_binding
+        {|target:
+  resources:
+    app_db:
+      binding:
+        ownership: external
+        store: eu-vault
+        keys:
+          POSTGRES_URL: secret/eu/app-db
+|}
+    with
+    | Error error -> Windtrap.fail (Sol_cli_config.error_to_string error)
+    | Ok config ->
+      (match Sol_cli_resource_binding.resolve config with
+       | Error message -> Windtrap.fail message
+       | Ok bindings ->
+         (match Sol_cli_resource_binding.of_type bindings ~typ:"postgres" with
+          | [ binding ] ->
+            Windtrap.equal
+              (Windtrap.option Windtrap.string)
+              ~msg:"the target's store replaces the inherited one"
+              (Some "eu-vault")
+              binding.store;
+            Windtrap.equal
+              (Windtrap.list (Windtrap.pair Windtrap.string Windtrap.string))
+              ~msg:"the target's keys replace the inherited ones"
+              [ "POSTGRES_URL", "secret/eu/app-db" ]
+              binding.keys
+          | _ -> Windtrap.fail "expected one postgres binding")))
+;;
+
+let test_ownership_sol_is_refused () =
+  with_temp_dir (fun () ->
+    match
+      load_with_binding
+        {|target:
+  resources:
+    app_db:
+      binding:
+        ownership: sol
+        store: vault-production
+        keys:
+          POSTGRES_URL: secret/production/app-db
+|}
+    with
+    | Ok _ ->
+      Windtrap.fail "ownership sol must be refused: the resource graph is the declaration"
+    | Error error ->
+      let text = Sol_cli_config.error_to_string error in
+      Windtrap.equal
+        Windtrap.bool
+        ~msg:"the refusal explains why"
+        true
+        (mentions "already declares a Sol-provisioned resource" text))
+;;
+
+let test_external_binding_requires_store_and_keys () =
+  with_temp_dir (fun () ->
+    let refuses body needle =
+      match load_with_binding body with
+      | Ok _ -> Windtrap.fail (Printf.sprintf "expected a refusal mentioning %S" needle)
+      | Error error ->
+        Windtrap.equal
+          Windtrap.bool
+          ~msg:("refusal mentions " ^ needle)
+          true
+          (mentions needle (Sol_cli_config.error_to_string error))
+    in
+    refuses
+      {|target:
+  resources:
+    app_db:
+      binding:
+        ownership: external
+        keys:
+          POSTGRES_URL: secret/production/app-db
+|}
+      "requires store";
+    refuses
+      {|target:
+  resources:
+    app_db:
+      binding:
+        ownership: external
+        store: vault-production
+|}
+      "requires keys")
+;;
+
+let test_two_provisioned_databases_are_refused () =
+  (* A layer may not declare a resource's shape (DEC-047), so build the graph directly. *)
+  let postgres name =
+    { Sol_cli_config.name
+    ; typ = Some "postgres"
+    ; partition_key = None
+    ; sort_key = None
+    ; indexes = []
+    ; size = None
+    ; omit = false
+    ; binding = None
+    }
+  in
+  let config =
+    { Sol_cli_config.project = Some "ws"
+    ; target = Result.get_ok (Sol_cli_config.parse_target "prod/aws/us-east-1")
+    ; resources = [ postgres "app_db"; postgres "analytics_db" ]
+    ; services = []
+    }
+  in
+  match Sol_cli_resource_binding.resolve config with
+  | Ok _ -> Windtrap.fail "two provisioned databases must not resolve"
+  | Error message ->
+    Windtrap.equal
+      Windtrap.bool
+      ~msg:"the refusal names the v1 limit"
+      true
+      (mentions "one provisioned database per target" message)
+;;
+
+let%test "resource binding: an external binding suppresses provisioning" =
+  test_external_binding_suppresses_provisioning ()
+;;
+
+let%test "resource binding: an override replaces the selection whole" =
+  test_binding_override_is_atomic ()
+;;
+
+let%test "resource binding: ownership sol is refused" = test_ownership_sol_is_refused ()
+
+let%test "resource binding: external requires store and keys" =
+  test_external_binding_requires_store_and_keys ()
+;;
+
+let%test "resource binding: two provisioned databases are refused" =
+  test_two_provisioned_databases_are_refused ()
+;;

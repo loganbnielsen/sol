@@ -1179,7 +1179,11 @@ let gcp : t =
   ; profile_vars = (fun ~production:_ ~production_postgres:_ -> [])
   ; guarded_removals = []
   ; root_declared_vars =
-      (fun ~has_postgres:_ ~production_postgres:_ ~ecr_repositories:_ -> Ok [])
+      (* GCP used to ignore this flag and declare Cloud SQL unconditionally, so omitting a
+         postgres resource stopped provisioning on AWS and not on GCP. Both providers now
+         derive provisioning from the same resolved ownership decision. *)
+      (fun ~has_postgres ~production_postgres:_ ~ecr_repositories:_ ->
+        Ok [ "create_database", string_of_bool has_postgres ])
   ; destroy_guard_vars =
       (fun ~final_snapshot:_ ->
         [ "sql_deletion_protection", "false"; "gke_deletion_protection", "false" ])

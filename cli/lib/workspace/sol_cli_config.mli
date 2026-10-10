@@ -47,6 +47,17 @@ type index =
   ; sort_key : string option
   }
 
+type resource_ownership =
+  | Ownership_sol
+  | Ownership_external
+
+type resource_binding =
+  { ownership : resource_ownership
+  ; store : string option
+  ; keys : (string * string) list
+  ; connection : (string * string) list
+  }
+
 type resource =
   { name : string
   ; typ : string option
@@ -55,6 +66,7 @@ type resource =
   ; indexes : index list
   ; size : string option
   ; omit : bool
+  ; binding : resource_binding option
   }
 
 type service =
