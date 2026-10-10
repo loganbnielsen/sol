@@ -14,10 +14,13 @@ it, in both delivery modes. Not a resource framework, and not a resource CRUD AP
 > application secrets it declares; nothing else is projected.**
 
 Object naming, key destinations (Secret vs ConfigMap), and providers are consequences of this
-sentence, not independent choices. Two derived rules are used throughout:
+sentence, not independent choices. Three derived rules are used throughout:
 
 - **No key without a named consumer.** A key is projected only because something reads it.
 - **The consumer's declaration does not vary by provider** — the acceptance test (§8.1).
+- **One identified provider per capability.** Every required capability resolves to exactly one
+  identified provider for the selected target. Consumer projections are derived from that
+  resolution and never independently determine credential authority.
 
 The invariant is not Kubernetes-specific. It applies to every delivery mechanism Sol owns,
 local development included (§10).
@@ -28,7 +31,31 @@ local development included (§10).
 |---|---|---|---|
 | `database.connection` | `POSTGRES_URL` | Secret | migration Job; units consuming a `postgres` resource |
 | `kafka.connection` | `KAFKA_SASL_PASSWORD` | Secret | contract Job; units consuming a `kafka` resource |
-| | `KAFKA_SSL_CA_CERT` | ConfigMap | trust material; not confidential |
+| | `KAFKA_SSL_CA_CERT` | Secret | trust material; delivered as a Secret under both providers (§3.4) |
+
+**A resolved capability is a resource contract, not a bundle of environment variables.** The
+resolution chain is:
+
+```text
+resource declaration  →  provider  →  resolved capability  →  consumer projection
+```
+
+A resolved capability carries enough identity to answer: which resource provides it, which provider
+owns it, which consumers require it, which material is sensitive, and which lifecycle produces and
+refreshes it. It is the contract of an **existing** resource — not an independently configurable
+resource object, and not a new inventory (§9).
+
+**One stable consumer contract per capability; a provider is compatible only if it satisfies it.**
+
+| Capability | Consumer contract |
+|---|---|
+| `database.connection` | one PostgreSQL connection string, `POSTGRES_URL` |
+| `kafka.connection` | SASL/SCRAM-SHA-256 authentication with a CA bundle |
+
+An external provider that cannot satisfy that contract — OAuth, mutual TLS client certificates, or a
+different connection interface — is **refused at plan**. It is not accommodated with
+provider-specific consumer behavior and not generalized behind an adapter (§9). The planner
+validates compatibility; it never generates provider-specific consumers.
 
 **Admission rule for a third capability** (all three conditions): a Sol provisioner exists in
 `platform/cloud`; at least one Sol-generated consumer exists; the contract keys are stable
@@ -119,9 +146,12 @@ config, and only then is `has_postgres = List.exists (r.typ = Some "postgres")` 
 `root_declared_vars ~has_postgres` sets `create_rds = has_postgres` **regardless of profile**
 (`sol_cli_provider_capabilities.ml`); the profile adds only multi-AZ and deletion protection
 (`production_postgres = has_postgres && production`). So a target whose *effective* resource graph
-contains a postgres resource provides `database.connection` with no declaration at all, and
-`provider = sol` may be written but is never required — there is nothing to duplicate, so the block
-exists to *override*.
+contains a postgres resource provides `database.connection` with no declaration at all.
+
+**`provider: sol` is not accepted.** The effective resource graph is the only declaration of a
+Sol-provisioned capability; a second statement of it could disagree with the graph, so the block
+exists solely to override to `external`, and writing `provider: sol` is refused rather than
+tolerated as a redundant form.
 
 **External references are per contract key.** The existing authority type is already per key —
 `External { store; key }`, held as `secret_authorities : unit → key → authority` — so a
@@ -197,7 +227,26 @@ graph contains two `postgres` resources is refused at plan, naming both — rega
 its units consume. Multi-database would require the capability to carry an env-var mapping and the
 provisioner to preserve resource identity; both are explicitly future work (§9).
 
-### 3.4 What plan does at the database boundary
+**Provisioning depends on effective resources; projection depends on consumers.** The effective
+resource graph decides what exists; `uses` decides who receives access. Capability resolution must
+not let an application dependency edge select which infrastructure resource is provisioned, so v1
+does not select between multiple effective PostgreSQL resources based on consumption.
+
+### 3.4 The Kafka CA is a Secret under both providers
+
+ESO materializes Kubernetes **Secrets**, not ConfigMaps. Delivering `KAFKA_SSL_CA_CERT` through a
+ConfigMap for a Sol-provisioned Kafka while an external Kafka delivers it through an ESO-managed
+Secret would change the consumer's volume reference by provider, violating §8.1. v1 therefore
+delivers the CA as a **Secret under both providers**: the Sol provisioner writes a Sol-managed
+Secret, and the external path writes an ESO-managed Secret.
+
+A public CA certificate does not become confidential because Kubernetes stores it in a Secret, and
+nothing is gained by putting it in a ConfigMap. The requirements are provenance, protection from
+unauthorized modification, and delivery identical under both providers. ConfigMap delivery is
+**not v1**: it would need a second writer and its own lifecycle to convert ESO-provided material
+(§9).
+
+### 3.5 What plan does at the database boundary
 
 **Two `postgres` resources in a target's effective graph.** The refusal is per target and counts
 the **effective graph, not consumption**: a target that keeps both `app_db` and `analytics_db`
@@ -291,6 +340,23 @@ verifying and reconciling installation-owned projections from the GitOps flow.
   every inheriting target *except* `eu-west-1`. v1 relies on per-target `--dry-run` to preview a
   change; an env-wide change report is deliberately not built (§9).
 
+### 6.1 Projection lifecycle
+
+| Situation | Required behaviour |
+|---|---|
+| Source unavailable | Fail before mutating the projection |
+| Source available, projection missing | Create it |
+| Source available, projection stale | Update it |
+| Projection ownership unknown | Refuse adoption |
+| Namespace A succeeds, B fails | Report partial failure, naming the namespace |
+| Capability removed | Stop projecting to new consumers; preserve objects still referenced until cleanup is provably safe |
+| Reconciliation interrupted | A subsequent reconcile repeats the operation safely |
+| Credential changed | Report that running workloads may still use the previous value |
+
+This requires **idempotence, safe ordering, and honest reporting** — not atomic cross-namespace
+updates, and not a new reconciliation framework. Switching providers must not delete the previous
+projection until consumers have been safely redirected (§7).
+
 ## 7. Moves and removals — report, never delete
 
 Two cases share one rule.
@@ -307,6 +373,9 @@ projection observed in a namespace is only removed when Sol can prove it owns it
 
 This keeps every removal in the same discipline as resource ownership: Sol removes only what it can
 prove it owns, and a populated object that may still hold a live credential is not proof.
+
+**Cleanup stays conservative in 1344d.** No sophisticated garbage collection: obsolete credential
+objects are reported, and objects of uncertain ownership are left in place.
 
 ## 8. Acceptance set — the implementation's review checklist
 
@@ -333,9 +402,10 @@ prove it owns, and a populated object that may still hold a live credential is n
 8. **Authority migration is reported** — a move between providers reports the object it orphans
    (§7); no silent change and no silent deletion.
 9. **Observable provenance** — `sol plan` and `sol secret status` show the resolved authority for
-   each key and where it was declared (environment or target). No particular internal
-   representation is prescribed: use the smallest mechanism that produces the diagnostic without
-   threading provenance through deployment, release, or rollback.
+   each key and whether it was declared at the environment or the target. Do **not** track or
+   display every intermediate inheritance decision, and do not prescribe an internal
+   representation: use the smallest mechanism that produces the diagnostic without threading
+   provenance through deployment, release, or rollback.
 10. **Inheritance behaves** — tests cover env-only, target-only, env+target override, an atomic
     override (no `store` carried over from the inherited declaration), a missing authority, and
     cross-target isolation.
@@ -347,6 +417,11 @@ prove it owns, and a populated object that may still hold a live credential is n
 12. **Partial projection failure is reported** — a reconciliation that succeeds in one namespace and
     fails in another reports failure and names the affected namespace; it never claims target-wide
     success.
+13. **CA destination consistency** — `KAFKA_SSL_CA_CERT` is delivered as a Secret under both
+    providers, and the consumer's volume reference does not change with the provider (§3.4).
+14. **Capability identity is resolved, not configured** — a required capability resolves to exactly
+    one identified provider for the selected target; a provider that cannot satisfy the capability's
+    consumer contract (§1) is refused at plan rather than met with a provider-specific consumer.
 
 ## 9. Out of scope
 
@@ -358,9 +433,15 @@ covers previewing a change); and — for v1 — GitOps with a Sol-provisioned ca
 Implementation non-goals, stated so a diff can be checked against them:
 
 - No generic capability registry and no runtime capability registration.
-- No independent capability inventory and no separate capability reconciliation lifecycle.
+- No independent capability inventory and no separate capability reconciliation lifecycle. Capability
+  reconciliation stays part of target installation and the existing deployment prerequisite
+  handling.
 - No new resource declaration DSL and no parallel configuration of existing infrastructure
   resources.
+- No redundant `provider: sol` configuration — the effective resource graph is the declaration.
+- No ConfigMap delivery for the Kafka CA, and no second writer or lifecycle to produce one.
+- No provider-specific branches in consumers and no generic adapters for unsupported protocols.
+- No independently configurable capability objects.
 - No speculative adapters for future capability types.
 - No automatic credential rotation controller.
 - No environment-wide impact-analysis system.
@@ -368,6 +449,13 @@ Implementation non-goals, stated so a diff can be checked against them:
 Capabilities remain a small, compiled contract for the concrete PostgreSQL and Kafka requirements
 Sol supports today. A third capability justifies itself through an actual provisioner, a consumer,
 and a stable contract — not hypothetical extensibility.
+
+**Implementation discipline.** For every new type, configuration field, Kubernetes object, or
+lifecycle operation, 1344d must identify: its authoritative source; whether it introduces another
+separately maintained source of truth; **which existing module, command, flag, default, or code path
+it deletes**; who creates, updates, verifies and removes it; and which acceptance test in §8
+establishes the required behaviour. A change that adds machinery without deleting any is reviewed
+against that absence.
 
 ## 10. Local development — the same invariant
 
