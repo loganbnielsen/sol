@@ -58,6 +58,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/charge-svc:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -92,6 +93,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/notify-worker:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -122,6 +124,7 @@ let fn_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/invoice-fn:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = Some "0 9 * * 1"
@@ -153,7 +156,6 @@ let local_env : Sol_cli_deployment_plan.env_config =
   ; region = None
   ; base_domain = None
   ; cluster_issuer = "letsencrypt-prod"
-  ; secret_backend = Sol_cli_manifest.Kubernetes_live
   }
 ;;
 
@@ -166,7 +168,6 @@ let customer_env : Sol_cli_deployment_plan.env_config =
   ; region = Some "us-east-1"
   ; base_domain = Some "example.com"
   ; cluster_issuer = "letsencrypt-prod"
-  ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
   }
 ;;
 
@@ -277,7 +278,6 @@ let deploy_without_tag ~git_sha =
     ~image_tag:None
     ~image_refs:[]
     ~registry:None
-    ~secret_backend:None
     ~confirm_group_change:false
     ~confirm_ecr_removal:false
     ~loki_push_url:None
@@ -340,7 +340,6 @@ let test_deploy_request_uses_explicit_tag () =
       ~image_tag:(Some "sha-abc")
       ~image_refs:[]
       ~registry:(Some "reg.example.com")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -363,7 +362,6 @@ let test_deploy_request_local_mode_builds_request () =
       ~image_tag:(Some "v2")
       ~image_refs:[]
       ~registry:(Some "gcr.io/myproject")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -393,7 +391,6 @@ let test_deploy_request_gitops_action () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -423,7 +420,6 @@ let test_deploy_request_dry_run_action_preserves_emit_to () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -453,7 +449,6 @@ let test_deploy_request_rejects_empty_target () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -474,7 +469,6 @@ let test_deploy_request_registry_omitted_stays_none () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:None
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -503,7 +497,6 @@ let test_deploy_request_accepts_image_refs () =
       ~image_tag:(Some "unused")
       ~image_refs:[ Some "svc", digest ]
       ~registry:(Some "reg")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -531,7 +524,6 @@ let test_deploy_request_rejects_mutable_image_ref () =
       ~image_tag:(Some "unused")
       ~image_refs:[ None, "reg.example.com/ws/svc:latest" ]
       ~registry:(Some "reg")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -657,14 +649,13 @@ let render_ok spec =
     Sol_cli_deployment_render.render_spec
       ~workspace:"myapp"
       ~release_id:release_id_of_test
-      ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
       spec
   with
   | Ok (ns_yaml, workload_yaml) -> ns_yaml, workload_yaml
   | Error e -> Windtrap.fail ("render_spec failed: " ^ e)
 ;;
 
-let run_plan_ok ~mode ?secret_backend plan =
+let run_plan_ok ~mode plan =
   match
     Sol_cli_executor.run_plan
       (Sol_cli_execution.context
@@ -672,7 +663,6 @@ let run_plan_ok ~mode ?secret_backend plan =
          ~workspace:plan.Sol_cli_deployment_plan.workspace
          ())
       ~mode
-      ?secret_backend
       plan
   with
   | Ok rs -> rs
@@ -788,11 +778,9 @@ let test_gitops_emit_file_has_namespace_kind () =
     assert_contains "namespace name present" content "name: myapp-payments")
 ;;
 
-let test_gitops_emit_uses_placeholder_backend () =
+let test_gitops_emit_omits_placeholder_secret () =
   with_temp_dir (fun dir ->
-    let env =
-      { customer_env with secret_backend = Sol_cli_manifest.Kubernetes_placeholder }
-    in
+    let env = customer_env in
     let plan = make_plan ~env [ svc_spec ] in
     ignore (run_plan_ok ~mode:(Sol_cli_executor.Emit_to dir) plan);
     let path = Filename.concat dir "myapp-payments-charge-svc.yaml" in
@@ -802,10 +790,9 @@ let test_gitops_emit_uses_placeholder_backend () =
       close_in ic;
       s
     in
-    assert_contains
-      "placeholder comment present"
-      content
-      "Populate these values before applying")
+    assert_contains "no placeholder Secret is emitted" content "kind: ConfigMap";
+    assert_absent "no Secret object is emitted" content "kind: Secret";
+    assert_absent "no placeholder guidance is emitted" content "Populate these values")
 ;;
 
 let test_gitops_emit_one_file_per_service () =
@@ -1099,11 +1086,7 @@ let test_change_set_build_is_path_agnostic () =
 let test_all_paths_start_from_same_plan_workspace () =
   let plan_local = make_plan ~env:local_env [ svc_spec ] in
   let plan_direct = make_plan ~env:customer_env [ svc_spec ] in
-  let plan_gitops =
-    make_plan
-      ~env:{ customer_env with secret_backend = Sol_cli_manifest.Kubernetes_placeholder }
-      [ svc_spec ]
-  in
+  let plan_gitops = make_plan ~env:customer_env [ svc_spec ] in
   let plan_hosted =
     make_plan
       ~env:{ customer_env with mode = Sol_cli_deployment_plan.Sol_hosted }
@@ -1182,7 +1165,6 @@ let test_deploy_request_rejects_nonpositive_keep () =
       ~image_tag:(Some "tag")
       ~image_refs:[]
       ~registry:(Some "reg")
-      ~secret_backend:(Some Sol_cli_manifest.Kubernetes_placeholder)
       ~confirm_group_change:false
       ~confirm_ecr_removal:false
       ~loki_push_url:None
@@ -1316,8 +1298,8 @@ let%test "gitops_emit: file has Namespace kind" =
   test_gitops_emit_file_has_namespace_kind ()
 ;;
 
-let%test "gitops_emit: uses placeholder backend" =
-  test_gitops_emit_uses_placeholder_backend ()
+let%test "gitops_emit: no placeholder Secret object" =
+  test_gitops_emit_omits_placeholder_secret ()
 ;;
 
 let%test "gitops_emit: one file per service + release artifact" =

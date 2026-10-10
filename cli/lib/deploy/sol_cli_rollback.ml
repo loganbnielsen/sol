@@ -173,6 +173,10 @@ let decode_workload ~release_id ~workspace (w : Sol_cli_release.workload) =
     ; image = w.image
     ; config = w.config
     ; secrets = w.secrets
+    ; secret_sources =
+        w.external_secret_refs
+        |> List.map (fun (key, store, remote_key) ->
+          key, Sol_cli_manifest.External { store; key = remote_key })
     ; build_secret_keys = []
     ; volumes
     ; schedule = w.schedule

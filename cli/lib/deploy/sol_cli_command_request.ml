@@ -23,7 +23,6 @@ type deploy_request =
   ; image_tag : string
   ; image_refs : (string option * string) list
   ; registry : string option
-  ; secret_backend : Sol_cli_manifest.secret_backend option
   ; confirm_group_change : bool
   ; confirm_ecr_removal : bool
   ; loki_push_url : string option
@@ -94,7 +93,6 @@ let make_deploy_request
       ~image_tag
       ~image_refs
       ~registry
-      ~secret_backend
       ~confirm_group_change
       ~confirm_ecr_removal
       ~loki_push_url
@@ -148,7 +146,6 @@ let make_deploy_request
           ; image_tag
           ; image_refs
           ; registry
-          ; secret_backend
           ; confirm_group_change
           ; confirm_ecr_removal
           ; loki_push_url

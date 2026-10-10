@@ -1,22 +1,6 @@
 include Sol_cli_manifest_yaml
 include Sol_cli_manifest_cluster_env
 
-type secret_backend =
-  | Kubernetes_live
-  | Kubernetes_placeholder
-  | External_secrets of
-      { store_ref : string
-      ; store_kind : secret_store_kind
-      ; key_prefix : string
-      ; refresh_interval : string
-      }
-
-let secret_backend_to_string = function
-  | Kubernetes_live -> "kubernetes-live"
-  | Kubernetes_placeholder -> "kubernetes-placeholder"
-  | External_secrets _ -> "external-secrets"
-;;
-
 let primitive_of_suffix name =
   if String.ends_with ~suffix:"_svc" name
   then Some Svc

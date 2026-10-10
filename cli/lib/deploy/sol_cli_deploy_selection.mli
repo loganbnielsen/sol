@@ -24,11 +24,6 @@ val secret_authorities_for_plan
   -> Sol_cli_deployment_plan.t
   -> ((string * string * Sol_cli_config.secret_authority) list, string) result
 
-val refuse_external_delivery
-  :  config:Sol_cli_config.t
-  -> Sol_cli_deployment_plan.t
-  -> (unit, string) result
-
 type plan_error =
   | Refused of string
   | Preflight of Sol_cli_profile.t * Sol_cli_profile_preflight.finding list
@@ -39,7 +34,6 @@ module Planning_input : sig
     ; registry : string
     ; sha : string
     ; emit_to : string option
-    ; secret_backend : Sol_cli_manifest.secret_backend
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list
@@ -55,7 +49,6 @@ module Target_plan_input : sig
     ; registry : string
     ; sha : string
     ; emit_to : string option
-    ; secret_backend : Sol_cli_manifest.secret_backend
     ; config : Sol_cli_config.t
     ; facts : Sol_cli_workspace_model.t
     ; inventory : Sol_cli_manifest.service list

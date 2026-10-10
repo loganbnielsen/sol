@@ -5,6 +5,7 @@ type workload =
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; external_secret_refs : (string * string * string) list
   ; schedule : string option
   ; scheduled_concurrency : string
   ; backoff_limit : int

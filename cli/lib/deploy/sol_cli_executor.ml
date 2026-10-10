@@ -44,42 +44,9 @@ let local ~ctx ~workspace ~release_id ~dry_run spec =
   dispatch_rendered ~ctx ~mode:(if dry_run then Dry_run else Apply) spec yaml
 ;;
 
-let artifact_backend backend =
-  match backend with
-  | Sol_cli_manifest.Kubernetes_live ->
-    Error
-      "refusing to emit a GitOps artifact with the kubernetes-live secret backend: a \
-       plaintext secret must never be committed to a repository. Use external-secrets \
-       (with --secret-store-ref) or kubernetes-placeholder."
-  | Sol_cli_manifest.Kubernetes_placeholder | Sol_cli_manifest.External_secrets _ ->
-    Ok backend
-;;
-
-let apply_backend backend =
-  match backend with
-  | Sol_cli_manifest.Kubernetes_live -> Ok backend
-  | Sol_cli_manifest.Kubernetes_placeholder | Sol_cli_manifest.External_secrets _ ->
-    Error
-      "refusing to apply a manifest rendered with kubernetes-placeholder or \
-       external-secrets: those backends emit secret references without values for a \
-       GitOps repository, and applying one directly would blank the live Secret. Use the \
-       kubernetes-live backend (the direct-deploy default) or --emit-to a GitOps \
-       repository."
-;;
-
-let gitops
-      ~ctx
-      ~workspace
-      ~release_id
-      ~dir
-      ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
-      spec
-  =
-  match artifact_backend secret_backend with
-  | Error _ as e -> e
-  | Ok secret_backend ->
-    Sol_cli_deployment_render.render_spec ~workspace ~release_id ~secret_backend spec
-    |> Fun.flip Result.bind (dispatch_rendered ~ctx ~mode:(Emit_to dir) spec)
+let gitops ~ctx ~workspace ~release_id ~dir spec =
+  Sol_cli_deployment_render.render_spec ~workspace ~release_id spec
+  |> Fun.flip Result.bind (dispatch_rendered ~ctx ~mode:(Emit_to dir) spec)
 ;;
 
 let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
@@ -91,23 +58,11 @@ let write_release_bundle ~dir ~(apply_mode : Sol_cli_release.apply_mode) plan =
   |> Result.map ignore
 ;;
 
-let run_plan
-      (execution : Sol_cli_execution.context)
-      ~mode
-      ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
-      ?before_apply
-      plan
-  =
+let run_plan (execution : Sol_cli_execution.context) ~mode ?before_apply plan =
   let workspace = execution.workspace in
   let env = execution.env in
   let services = plan.Sol_cli_deployment_plan.services in
   let open Result.Syntax in
-  let* backend =
-    match mode with
-    | Emit_to _ -> artifact_backend secret_backend
-    | Dry_run -> Ok secret_backend
-    | Apply -> apply_backend secret_backend
-  in
   (* Each workload carries its own immutable identity, not the target-wide release
      record id, so a deploy that changes one workload does not re-label and roll out
      the others. See [Sol_cli_deployment_plan.workload_release_id]. *)
@@ -118,12 +73,7 @@ let run_plan
         ~environment:plan.Sol_cli_deployment_plan.environment.env
         spec
     in
-    Sol_cli_deployment_render.render_spec
-      ~workspace
-      ?env
-      ~release_id
-      ~secret_backend:backend
-      spec
+    Sol_cli_deployment_render.render_spec ~workspace ?env ~release_id spec
     |> Result.map (fun yaml -> spec, yaml)
   in
   let* pairs =
@@ -150,10 +100,19 @@ let run_plan
       let* () = before_apply_result spec in
       let* () =
         match mode with
-        | Apply -> Sol_cli_secret.verify_workload_secret ~ctx:execution.cluster spec
+        | Apply ->
+          let* () =
+            Sol_cli_secret.verify_external_secret_destination ~ctx:execution.cluster spec
+          in
+          Sol_cli_secret.verify_workload_secret ~ctx:execution.cluster spec
         | Dry_run | Emit_to _ -> Ok ()
       in
       let* result = dispatch_rendered ~ctx:execution.cluster ~mode spec yaml in
+      let* () =
+        match mode with
+        | Apply -> Sol_cli_secret.verify_external_secret_ready ~ctx:execution.cluster spec
+        | Dry_run | Emit_to _ -> Ok ()
+      in
       execute (result :: acc) rest
   in
   let* results = execute [] pairs in

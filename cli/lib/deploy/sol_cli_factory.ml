@@ -25,8 +25,8 @@ let plan_of_services
   |> Result.map_error Sol_cli_deployment_plan.plan_error_to_string
 ;;
 
-let execute execution ~mode ?secret_backend ?before_apply plan =
-  Sol_cli_executor.run_plan execution ~mode ?secret_backend ?before_apply plan
+let execute execution ~mode ?before_apply plan =
+  Sol_cli_executor.run_plan execution ~mode ?before_apply plan
 ;;
 
 type request =

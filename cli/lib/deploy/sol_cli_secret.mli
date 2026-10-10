@@ -26,6 +26,23 @@ val verify_workload_secret
   -> Sol_cli_deployment_plan.service_spec
   -> (unit, string) result
 
+val verify_external_secret_ready
+  :  ctx:Sol_cli_kube_destination.context
+  -> Sol_cli_deployment_plan.service_spec
+  -> (unit, string) result
+
+val external_secret_status
+  :  ctx:Sol_cli_kube_destination.context
+  -> namespace:string
+  -> unit_name:string
+  -> expected_keys:string list
+  -> (string, string) result
+
+val verify_external_secret_destination
+  :  ctx:Sol_cli_kube_destination.context
+  -> Sol_cli_deployment_plan.service_spec
+  -> (unit, string) result
+
 val verify_runtime_secret
   :  ctx:Sol_cli_kube_destination.context
   -> namespace:string

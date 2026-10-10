@@ -51,7 +51,6 @@ let gate_env : Sol_cli_deployment_plan.env_config =
   ; region = Some "us-east-1"
   ; base_domain = Some "example.com"
   ; cluster_issuer = "letsencrypt-prod"
-  ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
   }
 ;;
 
@@ -96,6 +95,7 @@ let ledger_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "123.dkr.ecr.us-east-1.amazonaws.com/myapp/ledger-svc:abc1234"
   ; config = [ "LOG_LEVEL", "info" ]
   ; secrets = [ "DB_PASSWORD", "" ]
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -128,6 +128,7 @@ let billing_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "123.dkr.ecr.us-east-1.amazonaws.com/myapp/billing-svc:abc1234"
   ; config = [ "LOG_LEVEL", "info" ]
   ; secrets = [ "STRIPE_KEY", "" ]
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes =
       [ { Sol_cli_toml.name = "cache"
@@ -382,7 +383,6 @@ let render_by_identity ~release_id apply_specs =
              ~workspace:gate_plan.workspace
              ?env:gate_plan.environment.env
              ~release_id
-             ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
              s
          with
          | Ok (ns_yaml, body) -> ns_yaml ^ body
@@ -923,7 +923,6 @@ let test_fn_reconstructs_and_verifies_as_cronjob () =
             (match Sol_cli_release_id.of_string fn_release.release_id with
              | Ok id -> id
              | Error msg -> Windtrap.fail msg)
-          ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
           got
       with
       | Ok (_ns_yaml, body) -> body
@@ -2065,7 +2064,6 @@ let render_for_release ~(release : Sol_cli_release.t) spec applied_by =
          ~workspace:release.Sol_cli_release.workspace
          ?env:release.Sol_cli_release.environment
          ~release_id:id
-         ~secret_backend:Sol_cli_manifest.Kubernetes_live
          spec
      with
      | Error msg -> Error msg

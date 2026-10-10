@@ -119,10 +119,10 @@ contain the unit's declared keys plus the workload defaults `POSTGRES_URL` and
 `SOL_API_KEY`. `sol secret status TARGET` reports owners and presence without
 printing values.
 
-For M1, each required application key must declare `sol` or `external` authority
-in the target. Sol can write only `sol` keys. External delivery is not yet
-implemented: a remote deployment that needs an external key fails closed rather
-than falling back to a legacy Secret path.
+Each required application key must declare `sol` or `external` authority in the
+target. Sol can write only `sol` keys. External values are delivered by ESO into
+the unit's separate `-external-secrets` object; deployment verifies the ESO sync
+condition and exact materialized key set before checking workload readiness.
 
 Sol verifies that each required value exists and is non-empty; it cannot verify
 that application code reads the environment variable by the expected name. A
@@ -277,9 +277,9 @@ application-provided key source.
 
 Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
 `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
-`SOL_API_KEY`. Sol emits `SOL_API_KEY` in the generated Secret with an empty
-placeholder value, so operators can provide one shared internal key through
-the normal Secret or ExternalSecret path.
+`SOL_API_KEY`. Sol declares `SOL_API_KEY` as a required unit key. Its target authority selects
+either the unit-scoped Sol-managed Secret or an ESO-managed `ExternalSecret`; Sol does not emit a
+placeholder value.
 
 ## Summary
 

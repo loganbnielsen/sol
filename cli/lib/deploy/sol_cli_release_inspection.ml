@@ -199,15 +199,9 @@ let rendered_manifests_of_service
       ~workspace
       ?env
       ~release_id
-      ?(secret_backend = Sol_cli_manifest.Kubernetes_placeholder)
       (service : Sol_cli_deployment_plan.service_spec)
   =
-  Sol_cli_deployment_render.render_spec
-    ~workspace
-    ?env
-    ~release_id
-    ~secret_backend
-    service
+  Sol_cli_deployment_render.render_spec ~workspace ?env ~release_id service
   |> Result.map (fun (namespace_yaml, workload_yaml) ->
     split_manifest_docs (namespace_yaml ^ "\n" ^ workload_yaml)
     |> List.map (fun yaml ->
@@ -233,7 +227,6 @@ let rendered_manifests_of_plan (plan : Sol_cli_deployment_plan.t) =
                    ~workspace:plan.workspace
                    ~environment:plan.environment.env
                    service)
-              ~secret_backend:plan.environment.secret_backend
               service
           in
           Ok (rendered @ manifests))

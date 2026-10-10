@@ -54,19 +54,6 @@ let deployment_mode_of_target = function
   | Sol_hosted _ -> Sol_cli_deployment_plan.Sol_hosted
 ;;
 
-let default_secret_backend : t -> Sol_cli_manifest.secret_backend = function
-  | Local _ -> Sol_cli_manifest.Kubernetes_live
-  | Customer_direct _ -> Sol_cli_manifest.Kubernetes_live
-  | Customer_gitops _ -> Sol_cli_manifest.Kubernetes_placeholder
-  | Sol_hosted _ -> Sol_cli_manifest.Kubernetes_placeholder
-;;
-
-let resolve_secret_backend ?explicit t =
-  match explicit with
-  | Some backend -> backend
-  | None -> default_secret_backend t
-;;
-
 let to_env_config ~name t : Sol_cli_deployment_plan.env_config =
   { name
   ; mode = deployment_mode_of_target t
@@ -76,6 +63,5 @@ let to_env_config ~name t : Sol_cli_deployment_plan.env_config =
   ; region = None
   ; base_domain = None
   ; cluster_issuer = "letsencrypt-prod"
-  ; secret_backend = default_secret_backend t
   }
 ;;

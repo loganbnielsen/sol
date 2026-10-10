@@ -27,11 +27,4 @@ val customer_cloud_defaults
 
 val image_tag : t -> string
 val registry : t -> string
-val default_secret_backend : t -> Sol_cli_manifest.secret_backend
-
-val resolve_secret_backend
-  :  ?explicit:Sol_cli_manifest.secret_backend
-  -> t
-  -> Sol_cli_manifest.secret_backend
-
 val to_env_config : name:string -> t -> Sol_cli_deployment_plan.env_config

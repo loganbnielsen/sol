@@ -429,6 +429,29 @@ let run_status target =
             ~unit_name:workload.service.name
         in
         let* existing = Sol_cli_secret.unit_secret_keys ~ctx ~namespace ~secret_name in
+        let external_keys =
+          keys
+          |> List.filter (fun key ->
+            match Sol_cli_config.secret_authority config.target ~unit_address ~key with
+            | Some (Sol_cli_config.External _) -> true
+            | _ -> false)
+        in
+        let* external_state =
+          if external_keys = []
+          then Ok None
+          else
+            let* unit_name =
+              Sol_cli_deployment_plan.k8s_name_result workload.service.name
+              |> Result.map_error (fun error ->
+                Sol_cli_deployment_plan.plan_error_to_string error)
+            in
+            Sol_cli_secret.external_secret_status
+              ~ctx
+              ~namespace
+              ~unit_name:(Sol_cli_deployment_plan.k8s_name_to_string unit_name)
+              ~expected_keys:external_keys
+            |> Result.map Option.some
+        in
         Ok
           (keys
            |> List.map (fun key ->
@@ -442,7 +465,9 @@ let run_status target =
                match Sol_cli_config.secret_authority config.target ~unit_address ~key with
                | Some Sol_cli_config.Sol_managed ->
                  if List.mem key existing then "present" else "missing"
-               | Some (Sol_cli_config.External _) -> "external delivery pending (M2)"
+               | Some (Sol_cli_config.External _) ->
+                 let state = Option.value external_state ~default:"unknown" in
+                 state ^ "; restart required or process freshness unverified"
                | None -> "unmapped"
              in
              Printf.sprintf "%s/%s owner=%s state=%s" unit_address key owner state)))

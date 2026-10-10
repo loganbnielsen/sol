@@ -129,22 +129,12 @@ let run target_name image_refs var_file vars =
     |> Sol_cli_exit.of_msg
   in
   let registry = Option.value target.registry ~default:"resolved-image-refs" in
-  let* env_target =
-    Sol_cli_env_target.customer_cloud_defaults
-      ~registry
-      ~image_tag:"per-workload-digests"
-      ~emit_to:None
-      ()
-    |> Sol_cli_exit.of_msg
-  in
-  let secret_backend = Sol_cli_env_target.resolve_secret_backend env_target in
   let* planning =
     Sol_cli_deploy_selection.plan
       { workspace = Sol_cli_workspace.current_name ()
       ; registry
       ; sha = "unused"
       ; emit_to = None
-      ; secret_backend
       ; config = cfg
       ; facts
       ; inventory
@@ -215,14 +205,19 @@ let run target_name image_refs var_file vars =
     Sol_cli_deploy_selection.secret_authorities_for_plan ~config:cfg planning
     |> Sol_cli_exit.of_msg
   in
-  Printf.printf "\nSecret authorities:\n";
+  Printf.printf
+    "\nDeclared secret authorities (configuration does not prove provider access):\n";
   List.iter
     (fun (unit_address, key, authority) ->
        let source =
          match authority with
-         | Sol_cli_config.Sol_managed -> "sol-managed Kubernetes Secret"
+         | Sol_cli_config.Sol_managed ->
+           "declared Sol-managed Kubernetes Secret; value state deferred"
          | Sol_cli_config.External { store; key } ->
-           Printf.sprintf "ESO SecretStore %s key %s" store key
+           Printf.sprintf
+             "declared ESO SecretStore %s key %s; sync state deferred"
+             store
+             key
        in
        Printf.printf "  - %s/%s: %s\n" unit_address key source)
     secret_authorities;

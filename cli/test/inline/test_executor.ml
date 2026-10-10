@@ -42,6 +42,7 @@ let svc_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/charge-svc:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -76,6 +77,7 @@ let worker_spec : Sol_cli_deployment_plan.service_spec =
   ; image = "sol-registry:5000/myapp/notify-worker:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -269,27 +271,26 @@ let secretful_spec : Sol_cli_deployment_plan.service_spec =
   { svc_spec with secrets = [ "DATABASE_URL", ""; "API_KEY", "" ] }
 ;;
 
-let external_secrets_backend =
-  Sol_cli_manifest.External_secrets
-    { store_ref = "probe-store"
-    ; store_kind = Sol_cli_manifest.Cluster_secret_store
-    ; key_prefix = "myapp/"
-    ; refresh_interval = "1h"
-    }
-;;
-
 let emitted_name = "myapp-payments-charge-svc.yaml"
 
 let test_gitops_preserves_external_secrets () =
   let dir = temp_dir "sol-gitops-eso-" in
+  let spec =
+    { secretful_spec with
+      secret_sources =
+        [ ( "DATABASE_URL"
+          , Sol_cli_manifest.External { store = "probe-store"; key = "myapp/db" } )
+        ; "API_KEY", Sol_cli_manifest.Sol_managed
+        ]
+    }
+  in
   (match
      Sol_cli_executor.gitops
        ~ctx:Sol_cli_kube_destination.local_context
        ~workspace:"myapp"
        ~release_id:release_id_of_test
        ~dir
-       ~secret_backend:external_secrets_backend
-       secretful_spec
+       spec
    with
    | Error e -> Windtrap.fail ("gitops emission failed: " ^ e)
    | Ok _ -> ());
@@ -307,70 +308,19 @@ let test_gitops_preserves_external_secrets () =
     (Sol_cli_string.contains ~needle:"probe-store" content);
   Windtrap.equal
     Windtrap.bool
-    ~msg:"key prefix preserved"
+    ~msg:"remote key preserved"
     true
-    (Sol_cli_string.contains ~needle:"key: myapp/DATABASE_URL" content);
+    (Sol_cli_string.contains ~needle:"key: myapp/db" content);
   Windtrap.equal
     Windtrap.bool
-    ~msg:"refresh interval preserved"
+    ~msg:"Sol key remains in its own Secret"
     true
-    (Sol_cli_string.contains ~needle:"refreshInterval: 1h" content);
+    (Sol_cli_string.contains ~needle:"name: charge-svc-secrets" content);
   Windtrap.equal
     Windtrap.bool
     ~msg:"no plaintext Secret"
     false
-    (Sol_cli_string.contains ~needle:"kind: Secret" content)
-;;
-
-let test_gitops_rejects_kubernetes_live () =
-  let dir = temp_dir "sol-gitops-live-" in
-  let outcome =
-    Sol_cli_executor.gitops
-      ~ctx:Sol_cli_kube_destination.local_context
-      ~workspace:"myapp"
-      ~release_id:release_id_of_test
-      ~dir
-      ~secret_backend:Sol_cli_manifest.Kubernetes_live
-      secretful_spec
-  in
-  let written = Sys.file_exists (Filename.concat dir emitted_name) in
-  remove_dir dir emitted_name;
-  (match outcome with
-   | Error message ->
-     Windtrap.equal
-       Windtrap.bool
-       ~msg:"names the refusal"
-       true
-       (Sol_cli_string.contains ~needle:"kubernetes-live" message)
-   | Ok _ -> Windtrap.fail "kubernetes-live must not emit a GitOps artifact");
-  Windtrap.equal Windtrap.bool ~msg:"nothing was written" false written
-;;
-
-let test_gitops_placeholder_still_emits_secret () =
-  let dir = temp_dir "sol-gitops-placeholder-" in
-  (match
-     Sol_cli_executor.gitops
-       ~ctx:Sol_cli_kube_destination.local_context
-       ~workspace:"myapp"
-       ~release_id:release_id_of_test
-       ~dir
-       ~secret_backend:Sol_cli_manifest.Kubernetes_placeholder
-       secretful_spec
-   with
-   | Error e -> Windtrap.fail ("gitops emission failed: " ^ e)
-   | Ok _ -> ());
-  let content = read_file (Filename.concat dir emitted_name) in
-  remove_dir dir emitted_name;
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"placeholder Secret emitted"
-    true
-    (Sol_cli_string.contains ~needle:"kind: Secret" content);
-  Windtrap.equal
-    Windtrap.bool
-    ~msg:"no ExternalSecret"
-    false
-    (Sol_cli_string.contains ~needle:"kind: ExternalSecret" content)
+    (Sol_cli_string.contains ~needle:"\nkind: Secret\n" content)
 ;;
 
 let with_secretless_kubectl f =
@@ -460,14 +410,6 @@ let%test "gitops: worker file written" = test_gitops_worker ()
 
 let%test "gitops: external secrets preserved (BUG-081)" =
   test_gitops_preserves_external_secrets ()
-;;
-
-let%test "gitops: kubernetes-live refused (BUG-081)" =
-  test_gitops_rejects_kubernetes_live ()
-;;
-
-let%test "gitops: placeholder still emits a Secret (BUG-081)" =
-  test_gitops_placeholder_still_emits_secret ()
 ;;
 
 let%test "apply: fails closed before apply when the workload Secret is absent (BUG-054)" =

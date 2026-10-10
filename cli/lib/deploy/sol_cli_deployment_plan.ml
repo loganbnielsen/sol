@@ -12,7 +12,6 @@ type env_config =
   ; region : string option
   ; base_domain : string option
   ; cluster_issuer : string
-  ; secret_backend : Sol_cli_manifest.secret_backend
   }
 
 type primitive =
@@ -48,6 +47,7 @@ type service_spec =
   ; image : string
   ; config : (string * string) list
   ; secrets : (string * string) list
+  ; secret_sources : (string * Sol_cli_manifest.secret_source) list
   ; build_secret_keys : string list
   ; volumes : Sol_cli_toml.volume list
   ; schedule : string option
@@ -168,10 +168,6 @@ let primitive_of_string = function
   | s -> Error (Printf.sprintf "%S is not a primitive (expected svc, worker or fn)" s)
 ;;
 
-let secret_backend_to_json backend =
-  `String (Sol_cli_manifest.secret_backend_to_string backend)
-;;
-
 let default_cpu =
   match Sol_cli_toml.cpu_quantity_of_string "100m" with
   | Ok cpu -> cpu
@@ -253,6 +249,12 @@ let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload
   ; image = spec.image
   ; config = spec.config
   ; secrets = spec.secrets
+  ; external_secret_refs =
+      spec.secret_sources
+      |> List.filter_map (fun (key, source) ->
+        match source with
+        | Sol_cli_manifest.Sol_managed -> None
+        | External { store; key = remote_key } -> Some (key, store, remote_key))
   ; schedule = spec.schedule
   ; scheduled_concurrency =
       Sol_cli_toml.scheduled_concurrency_to_string spec.scheduled_concurrency
@@ -460,7 +462,6 @@ let to_json t =
           ; "region", opt_string env.region
           ; "base_domain", opt_string env.base_domain
           ; "cluster_issuer", `String env.cluster_issuer
-          ; "secret_backend", secret_backend_to_json env.secret_backend
           ] )
     ; "release_id", `String (Sol_cli_release_id.to_string t.release_id)
     ; "requested_scope", `String t.requested_scope
@@ -1149,6 +1150,7 @@ let of_services_result
           @ service_config
           @ List.map (fun (c : service_call) -> c.env_var, c.url) calls
       ; secrets = List.map (fun key -> key, "") toml.secret_keys
+      ; secret_sources = []
       ; build_secret_keys = toml.build_secret_keys
       ; volumes = toml.volumes
       ; schedule

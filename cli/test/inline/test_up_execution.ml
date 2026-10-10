@@ -31,6 +31,7 @@ let spec : Sol_cli_deployment_plan.service_spec =
   ; image = "registry.example.com/myapp/charge-svc:abc123"
   ; config = []
   ; secrets = []
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None

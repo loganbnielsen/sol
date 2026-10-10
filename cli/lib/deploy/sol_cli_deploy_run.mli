@@ -3,7 +3,6 @@ type context =
   ; sha : string
   ; registry : string
   ; facts : Sol_cli_workspace_model.t
-  ; secret_backend : Sol_cli_manifest.secret_backend
   ; emit_plan_to : string option
   ; target_cfg : Sol_cli_config.target
   ; resolved_config : Sol_cli_config.t

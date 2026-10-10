@@ -107,8 +107,8 @@ The following substrate inputs must exist before running `sol deploy`.
   `postgresql://user:password@host:5432/dbname?sslmode=require`.
 - Migration Jobs read `POSTGRES_URL` from the target's `sol-secrets` object.
   Populate it with `sol secret set <TARGET> @platform/POSTGRES_URL`. Application
-  workloads receive only their unit-scoped `<unit>-secrets` object. GitOps output
-  contains empty placeholders for Sol-owned application keys.
+  workloads receive only the unit-scoped Secret objects for their declared keys;
+  GitOps artifacts contain references, never secret values or placeholders.
 - Sol does not create the database in the application deploy path, run
   migrations at cluster startup, or manage credentials rotation. `sol migrate`
   uses the target platform Secret after `POSTGRES_URL` is available.
@@ -214,7 +214,7 @@ objects for each service in your workspace:
 | Namespace | Always. One namespace per `<workspace>-<domain>` pair. |
 | ServiceAccount | Always. One per service, in its namespace. |
 | ConfigMap | Always. Contains Sol's platform defaults plus any `[infra.env] config` keys from `sol.toml`. |
-| Secret | Direct deploys do not write application values: each workload references its own `<unit>-secrets` object, which `sol secret set TARGET <domain>/<unit>/<KEY>` creates or updates. GitOps output contains empty placeholders for Sol-owned unit keys. External keys fail closed until ESO delivery is implemented. Sol platform Jobs use a separate `sol-secrets` object for target-level inputs. |
+| Secret | Sol-owned values are written to each unit's `<unit>-secrets` object by `sol secret set TARGET <domain>/<unit>/<KEY>`. External values are delivered by a namespaced ESO `ExternalSecret` into `<unit>-external-secrets`; both deployment modes render the same references and no values or placeholder Secret objects. Sol platform Jobs use a separate `sol-secrets` object for target-level inputs. |
 | Deployment | For every `-svc` and `-worker`. |
 | Service (ClusterIP) | For every `-svc`. |
 | CronJob | For every `-fn`, using the `schedule:` field from `sol.toml`. |

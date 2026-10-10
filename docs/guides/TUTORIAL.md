@@ -904,10 +904,12 @@ sol deploy prod/aws/us-east-1 \
 # → Argo CD detects the change and applies it
 ```
 
-Application secret authority is declared per unit and key in the selected target.
-The current M1 deployment path resolves that declaration but refuses to deploy
-an externally owned key until ESO delivery is implemented; it never falls back
-to placeholder or legacy backend behavior.
+Application secret authority is declared per unit and key in the selected target. Sol-owned
+values use that unit's `-secrets` object; external values use a namespaced ESO `ExternalSecret`
+that writes only the declared external keys to `-external-secrets`. Direct and GitOps deployments
+render the same references and never emit values or placeholder Secret objects. Direct deploy
+verifies ESO sync, materialized keys and workload readiness. GitOps relies on Argo CD and ESO to
+reconcile the emitted resources.
 
 Sol platform Jobs use the reserved `@platform` scope for their own inputs, such
 as `POSTGRES_URL` for migration Jobs. For SASL_SSL targets, the contract Job also

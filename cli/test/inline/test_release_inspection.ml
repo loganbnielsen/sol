@@ -45,6 +45,7 @@ let service
   ; image = "registry.sol.dev/acct_123/pluto/" ^ name ^ ":abc123"
   ; config = [ "LOG_LEVEL", "info" ]
   ; secrets = [ "DATABASE_URL", "postgres://secret" ]
+  ; secret_sources = []
   ; build_secret_keys = []
   ; volumes = []
   ; schedule = None
@@ -77,7 +78,6 @@ let hosted_plan ?progressive_delivery () =
     ; region = Some "us-east-1"
     ; base_domain = Some "sol.example"
     ; cluster_issuer = "letsencrypt-prod"
-    ; secret_backend = Sol_cli_manifest.Kubernetes_placeholder
     }
   in
   { Sol_cli_deployment_plan.workspace = "pluto"
@@ -172,7 +172,7 @@ let test_rendered_manifest_diagnostics () =
     | Ok manifests -> manifests
     | Error msg -> Windtrap.fail msg
   in
-  check_int "manifest count" 14 (List.length manifests);
+  check_int "manifest count" 12 (List.length manifests);
   let rollout =
     List.find
       (fun (m : Sol_cli_release_inspection.rendered_manifest) ->

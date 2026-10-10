@@ -20,76 +20,18 @@ type workload_shape =
   | Http_service
   | Background_worker
 
-(* The ExternalSecret's secretStoreRef.kind is a closed set, not free text: an
-   unknown value would produce an artifact the operator cannot act on. *)
-type secret_store_kind =
-  | Secret_store
-  | Cluster_secret_store
-
-let secret_store_kind_to_string = function
-  | Secret_store -> "SecretStore"
-  | Cluster_secret_store -> "ClusterSecretStore"
-;;
-
-let secret_store_kind_of_string = function
-  | "SecretStore" -> Ok Secret_store
-  | "ClusterSecretStore" -> Ok Cluster_secret_store
-  | other ->
-    Error
-      (Printf.sprintf
-         "unknown secret store kind %S (expected: SecretStore | ClusterSecretStore)"
-         other)
-;;
-
-let refresh_interval_units = [ "ns"; "us"; "µs"; "ms"; "s"; "m"; "h" ]
-
-(* Accept the refreshInterval syntax the External Secrets Operator parses (a Go
-   time.ParseDuration): one or more decimal number/unit groups such as "1h",
-   "30m" or "500ms", plus the bare "0". Anything else is refused so Sol never
-   emits an ExternalSecret whose refresh interval cannot be used. *)
-let refresh_interval_of_string raw =
-  let text = String.trim raw in
-  let len = String.length text in
-  let malformed () =
-    Error
-      (Printf.sprintf
-         "%S is not a duration such as \"1h\", \"30m\", or \"1h30m\" (units: ns, us, µs, \
-          ms, s, m, h)"
-         raw)
-  in
-  let is_digit c = c >= '0' && c <= '9' in
-  let skip_digits i =
-    let rec go i = if i < len && is_digit text.[i] then go (i + 1) else i in
-    go i
-  in
-  let unit_at i =
-    List.find_map
-      (fun unit ->
-         let n = String.length unit in
-         if i + n <= len && String.equal (String.sub text i n) unit
-         then Some (i + n)
-         else None)
-      refresh_interval_units
-  in
-  let rec groups i =
-    if i = len
-    then Ok text
-    else (
-      let number_start = i in
-      let i = skip_digits i in
-      let i = if i < len && text.[i] = '.' then skip_digits (i + 1) else i in
-      let number = String.sub text number_start (i - number_start) in
-      match number, unit_at i with
-      | "", _ | _, None -> malformed ()
-      | _number, Some next -> groups next)
-  in
-  if String.equal text "0" then Ok text else if len = 0 then malformed () else groups 0
-;;
+type secret_source =
+  | Sol_managed
+  | External of
+      { store : string
+      ; key : string
+      }
 
 module Workload_spec = struct
   type t =
     { extra_labels : (string * string) list
     ; secret_keys : string list
+    ; secret_sources : (string * secret_source) list
     ; volumes : Sol_cli_toml.volume list
     ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
@@ -222,6 +164,7 @@ let configmap_doc ?(cluster_env = default_cluster_env) ?(extra_env = []) ~ns ~na
 ;;
 
 let workload_secret_name name = Printf.sprintf "%s-secrets" name
+let external_secret_name name = Printf.sprintf "%s-external-secrets" name
 
 let secret_doc
       ?(base_secrets = default_secrets)
@@ -252,53 +195,52 @@ let secret_doc
     ]
 ;;
 
-let external_secret_doc
-      ~store_ref
-      ~store_kind
-      ~key_prefix
-      ~refresh_interval
-      ~secret_keys
-      ~ns
-      ~name
-  =
-  let remote_ref key =
+let external_secret_doc ~secret_refs ~ns ~name =
+  let remote_ref (secret_key, store_ref, remote_key) =
     Y.map
-      [ "secretKey", Y.string key
-      ; "remoteRef", Y.map [ "key", Y.string (key_prefix ^ key) ]
+      [ "secretKey", Y.string secret_key
+      ; "remoteRef", Y.map [ "key", Y.string remote_key ]
+      ; ( "sourceRef"
+        , Y.map
+            [ ( "storeRef"
+              , Y.map [ "name", Y.string store_ref; "kind", Y.string "SecretStore" ] )
+            ] )
       ]
   in
   resource
-    ~api_version:"external-secrets.io/v1beta1"
+    ~api_version:"external-secrets.io/v1"
     ~kind:"ExternalSecret"
-    [ "metadata", metadata ~ns ~name:(workload_secret_name name)
+    [ ( "metadata"
+      , metadata_with_labels
+          ~labels:[ "app.kubernetes.io/managed-by", "sol" ]
+          ~ns
+          ~name:(external_secret_name name) )
     ; ( "spec"
       , Y.map
-          [ "refreshInterval", Y.string refresh_interval
-          ; ( "secretStoreRef"
-            , Y.map
-                [ "name", Y.string store_ref
-                ; "kind", Y.string (secret_store_kind_to_string store_kind)
-                ] )
+          [ "refreshInterval", Y.string "1h"
           ; ( "target"
             , Y.map
-                [ "name", Y.string (workload_secret_name name)
+                [ "name", Y.string (external_secret_name name)
                 ; "creationPolicy", Y.string "Owner"
                 ] )
-          ; "data", Y.list (List.map remote_ref secret_keys)
+          ; "data", Y.list (List.map remote_ref secret_refs)
           ] )
     ]
 ;;
 
-let secret_key_refs ~name secret_keys =
+let secret_key_refs ~name ~secret_sources secret_keys =
   secret_keys
   |> List.map (fun key ->
+    let secret_name =
+      match List.assoc_opt key secret_sources with
+      | Some (External _) -> external_secret_name name
+      | Some Sol_managed | None -> workload_secret_name name
+    in
     Y.map
       [ "name", Y.string key
       ; ( "valueFrom"
         , Y.map
-            [ ( "secretKeyRef"
-              , Y.map
-                  [ "name", Y.string (workload_secret_name name); "key", Y.string key ] )
+            [ "secretKeyRef", Y.map [ "name", Y.string secret_name; "key", Y.string key ]
             ] )
       ])
 ;;
@@ -427,10 +369,7 @@ let container_security =
 ;;
 
 let env_from ~name =
-  Y.list
-    [ Y.map [ "configMapRef", Y.map [ "name", Y.string (name ^ "-env") ] ]
-    ; Y.map [ "secretRef", Y.map [ "name", Y.string (workload_secret_name name) ] ]
-    ]
+  Y.list [ Y.map [ "configMapRef", Y.map [ "name", Y.string (name ^ "-env") ] ] ]
 ;;
 
 let resources ~cpu ~memory =
@@ -446,6 +385,7 @@ let non_empty_list key = function
 let pod_template
       { Workload_spec.extra_labels
       ; secret_keys
+      ; secret_sources
       ; volumes
       ; projected_identities
       ; env
@@ -591,7 +531,7 @@ let pod_template
        @ non_empty_list
            "volumeMounts"
            (volume_mounts @ projected_identity_mounts @ kafka_ca_mount)
-       @ non_empty_list "env" (secret_key_refs ~name secret_keys)
+       @ non_empty_list "env" (secret_key_refs ~name ~secret_sources secret_keys)
        @ [ "envFrom", env_from ~name; "resources", resources ~cpu ~memory ]
        @ probes ~shape ~consumes_kafka ~readiness_path)
   in
@@ -878,6 +818,7 @@ module Scheduled_workload_spec = struct
     ; name : string
     ; image : string
     ; secret_keys : string list
+    ; secret_sources : (string * secret_source) list
     ; projected_identities : Sol_cli_identity_projection.t list
     ; env : string option
     ; schedule : string
@@ -898,6 +839,7 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
       ; name
       ; image
       ; secret_keys
+      ; secret_sources
       ; projected_identities
       ; env
       ; schedule
@@ -1003,7 +945,7 @@ let cronjob_doc (workload : Scheduled_workload_spec.t) =
        ; "imagePullPolicy", Y.string "Always"
        ; "securityContext", container_security
        ]
-       @ non_empty_list "env" (secret_key_refs ~name secret_keys)
+       @ non_empty_list "env" (secret_key_refs ~name ~secret_sources secret_keys)
        @ [ "envFrom", env_from ~name; "resources", resources ~cpu ~memory ]
        @ kafka_ca)
   in
