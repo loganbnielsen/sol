@@ -52,6 +52,26 @@ success. A skipped capability is named as skipped; it is not silently promoted.
 10. Live cloud qualification may incur cost. Do not start it without explicit operator
    authorization.
 
+## Releases versus features — which method verifies what
+
+**The harness qualifies releases. Direct runs verify features.**
+
+Would-be verification of unreleased work arrives at rule 1's refusal — `candidate-binding.sh` rejects a
+workspace at another revision or a tree with modified tracked files — because the harness exists to
+qualify the artifact a user installs. That refusal is the harness working, not an obstacle to route
+around: **do not loosen it to admit a feature branch.**
+
+Instead, separate the two questions and the two methods:
+
+- **A release claim** is qualified through the harness, against a released candidate, with records
+  under `records/`.
+- **An unreleased feature** is verified by running `sol` directly against a disposable target —
+  deploy, observe the property, destroy. That evidence is real and can be recorded, but it does not
+  promote a release claim, and it does not go through `candidate-binding.sh`.
+
+State which one a verification is, so the next person does not rediscover the refusal and reach for
+weakening the check.
+
 ## Current executable surfaces
 
 - `local/local-qual.sh` plus `rows-ocaml.sh` / `rows-ts.sh` — integrated local behavioral
