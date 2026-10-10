@@ -40,6 +40,29 @@ let apply_specs ~ensure_held ~ctx ~local ~release specs =
   specs |> Sol_cli_result.map_list apply_spec |> Result.map ignore
 ;;
 
+(* The ExternalSecrets the release Sol is rolling back to declares: one per recorded
+   workload that carries external remote refs. An ExternalSecret recorded by the release it
+   is rolling back from but not declared here is an orphan to prune. *)
+let declared_external_secrets (release : Sol_cli_release.t) =
+  release.workloads
+  |> List.filter_map (fun (w : Sol_cli_release_id.recorded_workload) ->
+    if w.spec.external_secret_refs = []
+    then None
+    else (
+      match
+        Sol_cli_deployment_plan.namespace_name
+          ~workspace:release.workspace
+          ~domain:w.spec.domain
+      with
+      | Error _ -> None
+      | Ok namespace ->
+        Some
+          { Sol_cli_workload_ownership.resource = "externalsecret"
+          ; namespace
+          ; name = Sol_cli_manifest.external_secret_name w.spec.name
+          }))
+;;
+
 let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) result =
   let* release = Sol_cli_release_store.get ~ctx ~workspace ~release_id in
   Printf.printf "Rolling back %s to release %s\n%!" workspace release.release_id;
@@ -80,7 +103,32 @@ let run_locked ~lease ~ctx ~local ~workspace ~facts release_id : (unit, string) 
         (fun () -> Sol_cli_rollback.live_workloads ~ctx ~workspace:release.workspace)
     ; prune =
         (fun ~live ~surplus ->
-          Sol_cli_rollback.prune_workloads ~ctx ~evidence ~live ~surplus)
+          let* report = Sol_cli_rollback.prune_workloads ~ctx ~evidence ~live ~surplus in
+          let* external_secrets =
+            Sol_cli_rollback.prune_external_secrets
+              ~ctx
+              ~evidence
+              ~declared:(declared_external_secrets release)
+          in
+          List.iter
+            (fun (t : Sol_cli_rollback.prune_target) ->
+               Sol_cli_report.app
+                 "Removed %s %s/%s: this release no longer declares it."
+                 t.resource
+                 t.namespace
+                 t.name)
+            external_secrets.removed_external_secrets;
+          List.iter
+            (fun ((t : Sol_cli_rollback.prune_target), reason) ->
+               Sol_cli_report.warn
+                 "Retained %s %s/%s (%s): Sol removes an external Secret only while its \
+                  live UID equals the UID recorded at apply. Adopt or remove it by hand."
+                 t.resource
+                 t.namespace
+                 t.name
+                 (Sol_cli_rollback.unowned_reason_to_string reason))
+            external_secrets.unowned_external_secrets;
+          Ok report)
     ; move_pointer = (fun () -> Sol_cli_release_store.move_pointer ~ctx release)
     ; verify_pointer = (fun () -> Sol_cli_rollback.verify_pointer ~ctx ~release)
     ; record_consumer_groups =

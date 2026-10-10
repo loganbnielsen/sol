@@ -2564,3 +2564,115 @@ let%test
 let%test "rollback_transaction: an uncorrected guard record is reported (BUG-090)" =
   test_execute_reports_an_uncorrected_guard_record ()
 ;;
+
+(* #4: a recorded ExternalSecret the plan no longer declares is an orphan — whether its
+   workload is gone or its last external key was removed. *)
+let test_orphaned_external_secrets_are_the_undeclared_ones () =
+  let evidence =
+    [ { Sol_cli_release_id.resource = "deployment"
+      ; namespace = "myapp-payments"
+      ; name = "charge-svc"
+      ; uid = "d-1"
+      }
+    ; { Sol_cli_release_id.resource = "externalsecret"
+      ; namespace = "myapp-payments"
+      ; name = "charge-svc-external-secrets"
+      ; uid = "es-1"
+      }
+    ; { Sol_cli_release_id.resource = "externalsecret"
+      ; namespace = "myapp-payments"
+      ; name = "orders-svc-external-secrets"
+      ; uid = "es-2"
+      }
+    ]
+  in
+  let declared =
+    [ { Sol_cli_workload_ownership.resource = "externalsecret"
+      ; namespace = "myapp-payments"
+      ; name = "charge-svc-external-secrets"
+      }
+    ]
+  in
+  let orphans = Sol_cli_rollback.orphaned_external_secret_evidence ~evidence ~declared in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"only the ExternalSecret the plan does not declare is an orphan"
+    1
+    (List.length orphans);
+  Windtrap.equal
+    Windtrap.string
+    ~msg:"the orphan is the undeclared ExternalSecret"
+    "orders-svc-external-secrets"
+    (List.hd orphans).name
+;;
+
+let test_prune_external_secrets_removes_only_the_uid_match () =
+  let evidence =
+    [ { Sol_cli_release_id.resource = "externalsecret"
+      ; namespace = "myapp-payments"
+      ; name = "charge-svc-external-secrets"
+      ; uid = "es-1"
+      }
+    ; { Sol_cli_release_id.resource = "externalsecret"
+      ; namespace = "myapp-payments"
+      ; name = "orders-svc-external-secrets"
+      ; uid = "es-2"
+      }
+    ; { Sol_cli_release_id.resource = "externalsecret"
+      ; namespace = "myapp-payments"
+      ; name = "refund-svc-external-secrets"
+      ; uid = "es-3"
+      }
+    ]
+  in
+  with_fake_kubectl
+    {|#!/bin/sh
+case "$3" in
+  get)
+    case "$5" in
+      charge-svc-external-secrets) printf '%s' es-1 ;;
+      orders-svc-external-secrets) printf '%s' something-else ;;
+      *) printf '%s\n' 'Error from server (Forbidden): externalsecrets "refund-svc-external-secrets" is forbidden' >&2; exit 1 ;;
+    esac ;;
+  delete) exit 0 ;;
+  *) exit 1 ;;
+esac
+|}
+    (fun () ->
+       match
+         Sol_cli_rollback.prune_external_secrets
+           ~ctx:Sol_cli_kube_destination.local_context
+           ~evidence
+           ~declared:[]
+       with
+       | Error msg -> Windtrap.fail msg
+       | Ok report ->
+         let removed name =
+           List.exists
+             (fun (t : Sol_cli_rollback.prune_target) -> String.equal t.name name)
+             report.removed_external_secrets
+         in
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"the ExternalSecret whose live UID matches is removed"
+           true
+           (removed "charge-svc-external-secrets");
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"a foreign ExternalSecret (live UID differs) is retained"
+           false
+           (removed "orders-svc-external-secrets");
+         Windtrap.equal
+           Windtrap.bool
+           ~msg:"an unobservable ExternalSecret is retained"
+           false
+           (removed "refund-svc-external-secrets"))
+;;
+
+let%test "external_secret_prune: an undeclared ExternalSecret is an orphan" =
+  test_orphaned_external_secrets_are_the_undeclared_ones ()
+;;
+
+let%test "external_secret_prune: only the UID match is removed" =
+  test_prune_external_secrets_removes_only_the_uid_match ()
+;;

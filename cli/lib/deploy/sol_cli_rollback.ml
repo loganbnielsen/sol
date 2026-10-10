@@ -676,31 +676,68 @@ let verify_workloads
 let display_actual actual = if String.equal actual "" then "<none>" else actual
 let kind_resource kind = fst (live_kind_path kind)
 
-(* Capture the live `metadata.uid` of each workload this apply created, so a later
-   removal can require positive ownership evidence: the live object's UID must
-   equal the UID recorded here (docs/architecture/ownership.md). A read that fails
-   records no evidence for that object rather than failing the deploy; the absence
-   fails closed at removal, not here. *)
+(* The ExternalSecret Sol renders for a unit that declares at least one external key. Its
+   UID is recorded with its workload's, so an orphan can be removed under the same positive
+   ownership discipline. *)
+let external_secret_of_spec (spec : Sol_cli_deployment_plan.service_spec) =
+  let has_external =
+    List.exists
+      (fun (_, source) ->
+         match source with
+         | Sol_cli_manifest.Sol_managed -> false
+         | External _ -> true)
+      spec.secret_sources
+  in
+  if has_external
+  then (
+    let namespace = Sol_cli_deployment_plan.namespace_to_string spec.namespace in
+    let name =
+      Sol_cli_manifest.external_secret_name
+        (Sol_cli_deployment_plan.k8s_name_to_string spec.k8s_name)
+    in
+    Some { Sol_cli_workload_ownership.resource = "externalsecret"; namespace; name })
+  else None
+;;
+
+let declared_external_secrets (plan : Sol_cli_deployment_plan.t) =
+  plan.services |> List.filter_map external_secret_of_spec
+;;
+
+(* A read that fails records no evidence for that object rather than failing the deploy;
+   the absence fails closed at removal, not here. *)
+let capture_uid ~ctx ~resource ~namespace ~name =
+  match read_jsonpath ~ctx ~resource ~name ~namespace ~jsonpath:"{.metadata.uid}" with
+  | Ok uid when not (String.equal uid "") ->
+    [ { Sol_cli_release_id.resource; namespace; name; uid } ]
+  | Ok _ | Error _ -> []
+;;
+
+(* Capture the live `metadata.uid` of each object this apply created, so a later removal
+   can require positive ownership evidence: the live object's UID must equal the UID
+   recorded here (docs/architecture/ownership.md). A workload's ExternalSecret is captured
+   with it (external_secret_of_spec). *)
 let capture_owned
       ~(ctx : Sol_cli_kube_destination.context)
       (plan : Sol_cli_deployment_plan.t)
   : Sol_cli_release_id.owned_object list
   =
   plan.services
-  |> List.filter_map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
+  |> List.concat_map (fun (spec : Sol_cli_deployment_plan.service_spec) ->
     let id = identity_of_spec spec in
-    let resource = kind_resource id.kind in
-    match
-      read_jsonpath
+    let workload =
+      capture_uid
         ~ctx
-        ~resource
-        ~name:id.name
+        ~resource:(kind_resource id.kind)
         ~namespace:id.namespace
-        ~jsonpath:"{.metadata.uid}"
-    with
-    | Ok uid when not (String.equal uid "") ->
-      Some { Sol_cli_release_id.resource; namespace = id.namespace; name = id.name; uid }
-    | Ok _ | Error _ -> None)
+        ~name:id.name
+    in
+    let external_secret =
+      match external_secret_of_spec spec with
+      | None -> []
+      | Some id ->
+        capture_uid ~ctx ~resource:id.resource ~namespace:id.namespace ~name:id.name
+    in
+    workload @ external_secret)
 ;;
 
 let live_kind_volumes_path = function
@@ -905,6 +942,82 @@ let prune_workloads
     Error
       (Printf.sprintf
          "could not prune %d surplus object(s):\n%s"
+         (List.length errors)
+         (String.concat "\n" errors))
+;;
+
+(* Recorded ExternalSecrets the plan no longer declares: the workload may be live (its last
+   external key was removed) or gone entirely, and neither is declared, so both are orphans.
+   This is the trigger the surplus-workload path cannot express, because a live workload is
+   not surplus. *)
+let orphaned_external_secret_evidence
+      ~(evidence : Sol_cli_release_id.owned_object list)
+      ~(declared : Sol_cli_workload_ownership.identity list)
+  =
+  evidence
+  |> List.filter (fun (o : Sol_cli_release_id.owned_object) ->
+    String.equal o.resource "externalsecret"
+    && not
+         (List.exists
+            (fun (id : Sol_cli_workload_ownership.identity) ->
+               String.equal id.namespace o.namespace && String.equal id.name o.name)
+            declared))
+;;
+
+type external_secret_prune_report =
+  { removed_external_secrets : prune_target list
+  ; unowned_external_secrets : (prune_target * unowned_reason) list
+  }
+
+(* Remove a recorded ExternalSecret only while its live UID is exactly the UID recorded at
+   apply; a different UID, an absent object, or an unobservable one is retained and
+   reported. The UID is read at removal time, not from an earlier listing. *)
+let prune_external_secrets
+      ~(ctx : Sol_cli_kube_destination.context)
+      ~(evidence : Sol_cli_release_id.owned_object list)
+      ~(declared : Sol_cli_workload_ownership.identity list)
+  : (external_secret_prune_report, string) result
+  =
+  let classify (o : Sol_cli_release_id.owned_object) =
+    let ownership =
+      { Sol_cli_workload_ownership.resource = o.resource
+      ; namespace = o.namespace
+      ; name = o.name
+      }
+    in
+    let target = { resource = o.resource; namespace = o.namespace; name = o.name } in
+    match Sol_cli_workload_ownership.observe ~ctx ownership with
+    | Sol_cli_workload_ownership.Live_present uid ->
+      if Sol_cli_workload_ownership.owns ~recorded:(Some o.uid) ~live_uid:uid
+      then Ok target
+      else Error Live_uid_differs
+    | Sol_cli_workload_ownership.Live_absent -> Error Live_absent
+    | Sol_cli_workload_ownership.Live_unobservable reason ->
+      Error (Live_unobservable reason)
+  in
+  let removed, unowned =
+    List.fold_left
+      (fun (removed, unowned) o ->
+         match classify o with
+         | Ok target -> target :: removed, unowned
+         | Error reason ->
+           ( removed
+           , ({ resource = o.resource; namespace = o.namespace; name = o.name }, reason)
+             :: unowned ))
+      ([], [])
+      (orphaned_external_secret_evidence ~evidence ~declared)
+  in
+  let report =
+    { removed_external_secrets = List.rev removed
+    ; unowned_external_secrets = List.rev unowned
+    }
+  in
+  match List.filter_map (delete_target ~ctx) report.removed_external_secrets with
+  | [] -> Ok report
+  | errors ->
+    Error
+      (Printf.sprintf
+         "could not prune %d orphaned ExternalSecret(s):\n%s"
          (List.length errors)
          (String.concat "\n" errors))
 ;;

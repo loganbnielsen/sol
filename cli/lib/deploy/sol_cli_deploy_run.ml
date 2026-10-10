@@ -305,6 +305,68 @@ let record_applied_state ~cluster ~workspace ~sha plan =
    different live UID, or absent) is retained and reported, not a reconciliation failure:
    there is no recorded object left to authorize. An absent current release is the first
    deploy: there is no boundary to preserve, so only what is observed is reported. *)
+(* Remove the ExternalSecret of a unit that no longer declares any external key, or whose
+   workload is gone. The workload is applied first (this runs after apply), so deleting the
+   ES cannot strand a live workload that still references it. Unobservable evidence fails
+   the deploy for the same reason as a surplus workload: the next release record would drop
+   the only UID that could authorize a later removal. *)
+let prune_orphaned_external_secrets ~cluster ~plan ~evidence applied_but =
+  match
+    Sol_cli_rollback.prune_external_secrets
+      ~ctx:cluster
+      ~evidence
+      ~declared:(Sol_cli_rollback.declared_external_secrets plan)
+  with
+  | Error message ->
+    Error
+      (Printf.sprintf
+         "%s: orphaned ExternalSecret removal failed: %s"
+         applied_but
+         message)
+  | Ok report ->
+    List.iter
+      (fun (t : Sol_cli_rollback.prune_target) ->
+         Sol_cli_report.app
+           "Removed %s %s/%s: this target no longer declares it."
+           t.resource
+           t.namespace
+           t.name)
+      report.removed_external_secrets;
+    List.iter
+      (fun ((t : Sol_cli_rollback.prune_target), reason) ->
+         Sol_cli_report.warn
+           "Retained %s %s/%s (%s): Sol removes an external Secret only while its live \
+            UID equals the UID recorded at apply. Adopt or remove it by hand."
+           t.resource
+           t.namespace
+           t.name
+           (Sol_cli_rollback.unowned_reason_to_string reason))
+      report.unowned_external_secrets;
+    let unresolved =
+      List.filter
+        (fun (_, reason) ->
+           match reason with
+           | Sol_cli_rollback.Live_unobservable _ -> true
+           | No_recorded_uid | Live_uid_differs | Live_absent -> false)
+        report.unowned_external_secrets
+    in
+    (match unresolved with
+     | [] -> Ok ()
+     | objects ->
+       Error
+         (Printf.sprintf
+            "%s: %d orphaned ExternalSecret(s) could not be observed, so Sol cannot know \
+             whether the ones it recorded are still live: %s"
+            applied_but
+            (List.length objects)
+            (String.concat
+               ", "
+               (List.map
+                  (fun ((t : Sol_cli_rollback.prune_target), _) ->
+                     Printf.sprintf "%s %s/%s" t.resource t.namespace t.name)
+                  objects))))
+;;
+
 let remove_surplus_workloads (ctx : context) plan : (unit, string) result =
   let workspace = ctx.execution.workspace in
   let cluster = ctx.execution.cluster in
@@ -377,25 +439,28 @@ let remove_surplus_workloads (ctx : context) plan : (unit, string) result =
                  u.identity.name
                  (Sol_cli_rollback.unowned_reason_to_string u.reason))
             resolved;
-          (match unresolved with
-           | [] -> Ok ()
-           | objects ->
-             Error
-               (Printf.sprintf
-                  "%s: %d surplus object(s) could not be observed, so Sol cannot know \
-                   whether the ones it recorded are still live: %s"
-                  applied_but
-                  (List.length objects)
-                  (String.concat
-                     ", "
-                     (List.map
-                        (fun (u : Sol_cli_rollback.unowned_workload) ->
-                           Printf.sprintf
-                             "%s %s/%s"
-                             (Sol_cli_rollback.kind_resource u.identity.kind)
-                             u.identity.namespace
-                             u.identity.name)
-                        objects))))))
+          (match prune_orphaned_external_secrets ~cluster ~plan ~evidence applied_but with
+           | Error message -> Error message
+           | Ok () ->
+             (match unresolved with
+              | [] -> Ok ()
+              | objects ->
+                Error
+                  (Printf.sprintf
+                     "%s: %d surplus object(s) could not be observed, so Sol cannot know \
+                      whether the ones it recorded are still live: %s"
+                     applied_but
+                     (List.length objects)
+                     (String.concat
+                        ", "
+                        (List.map
+                           (fun (u : Sol_cli_rollback.unowned_workload) ->
+                              Printf.sprintf
+                                "%s %s/%s"
+                                (Sol_cli_rollback.kind_resource u.identity.kind)
+                                u.identity.namespace
+                                u.identity.name)
+                           objects)))))))
 ;;
 
 (* Name every declared workload whose live object Sol does not own (a different UID, or no
