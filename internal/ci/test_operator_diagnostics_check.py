@@ -12,9 +12,6 @@ FILES = [
     "platform/cloud/aws/cluster/variables.tf",
     "cli/lib/workspace/sol_cli_manifest_yaml.ml",
     "cli/lib/deploy/sol_cli_substrate.ml",
-    "cli/lib/kube/sol_cli_rollout_diagnosis.ml",
-    "cli/bin/cmd_status.ml",
-    "cli/bin/cmd_logs.ml",
     "cli/lib/cloud/sol_cli_provider_capabilities.ml",
     "platform/cloud/modules/platform/platform_deploy_rbac.tf",
 ]
@@ -55,8 +52,12 @@ CASES = [
         "cli/lib/workspace/sol_cli_manifest_yaml.ml", '~cluster_role:"sol-operator-diagnostics"', '~cluster_role:"cluster-admin"')),
     ("the operator binding granted to another group", replace(
         "cli/lib/workspace/sol_cli_manifest_yaml.ml", '~group:"sol:operators"', '~group:"system:authenticated"')),
-    ("a new read the operator cannot perform", replace(
-        "cli/bin/cmd_status.ml", '[ "get"; "ns"; ns ]', '[ "get"; "configmaps"; "-n"; ns ]')),
+    ("a missing pod-event permission required for native failure diagnosis", replace(
+        ROLE,
+        POD_RESOURCES,
+        '    resources  = ["pods", "pods/log", "services"]')),
+    ("a missing Deployment permission required to inspect rollout readiness", replace(
+        ROLE, '    resources  = ["deployments"]', '    resources  = []')),
     ("an ARN that never reaches the provider root", replace(
         "cli/lib/cloud/sol_cli_provider_capabilities.ml", '(Sol_cli_config.provider_field target "operator_role_arn")', "None")),
     ("an operator RoleBinding the substrate identity cannot bind", replace(

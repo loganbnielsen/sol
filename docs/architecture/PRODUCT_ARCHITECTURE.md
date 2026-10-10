@@ -183,7 +183,7 @@ application model.
 
 Observability is a shared workspace surface, not one dashboard per service. See
 [`observability-design.md`](observability-design.md) for the label model,
-backend modes, and `sol status` / `sol open` UX.
+backend modes, and the boundary between deployment verification and provider-native diagnosis.
 
 ---
 
@@ -211,8 +211,7 @@ lifecycle, with specialized operational exploration (logs, metrics, traces)
 delegated to Grafana via contextual links rather than reimplemented. This is
 a direction, not a current implementation commitment — building it is
 explicitly deferred until DEC-008 has a working tenancy prototype and a real
-hosted-executor design exists. Until then, the CLI (`sol status`/`sol open`)
-plus Grafana dashboards (`OBS-044`) remain the actual product. Any future web
+hosted-executor design exists. Until then, the CLI owns deployment lifecycle and Grafana dashboards (`OBS-044`) remain the operational interface. Any future web
 control plane must invoke the same scaffold generator `sol new` uses (no
 parallel hosted-only template implementation), and any GitHub App capability
 granting repo write access or webhook events is its own separate

@@ -8,9 +8,6 @@ import tfconfig
 
 MUTATING = {"create", "update", "patch", "delete", "deletecollection"}
 INTERACTIVE = {"pods/exec", "pods/portforward", "pods/attach"}
-CANONICAL = {"ns": "namespaces", "svc": "services", "cronjob": "cronjobs", "deployment": "deployments"}
-
-
 def fail(message):
     sys.exit(f"check_operator_diagnostics: {message}")
 
@@ -118,19 +115,22 @@ def main():
     capabilities = root / "cli/lib/cloud/sol_cli_provider_capabilities.ml"
     if 'provider_field target "operator_role_arn"' not in capabilities.read_text():
         fail("operator_role_arn is declared by the AWS root but never routed to it, so no access entry is created")
-    readers = [
-        root / "cli/lib/kube/sol_cli_rollout_diagnosis.ml",
-        root / "cli/bin/cmd_status.ml",
-        root / "cli/bin/cmd_logs.ml",
-    ]
-    reads = sorted({m for f in readers for m in re.findall(r'"get"; "([a-z/]+)"', f.read_text())})
-    for resource in reads:
-        api = CANONICAL.get(resource, resource)
-        if api not in granted:
-            fail(
-                f"the read-only diagnostic path reads '{resource}' ({api}), which the operator's grant does not cover"
-            )
-    print("operator diagnostics: read-only grant, wired end to end, covers the diagnostic path")
+    # This is the separately provisioned human operator identity, used with
+    # native Kubernetes tooling. Sol's `up` readiness and failure diagnosis run
+    # through the command's active execution context in Sol_cli_up_execution;
+    # they do not assume operator_role_arn. Keep this grant sufficient for
+    # operators to inspect workload readiness, pod logs, and failure events.
+    required_operator_resources = {
+        "pods", "pods/log", "services", "events", "deployments", "cronjobs"
+    }
+    missing_resources = required_operator_resources - granted
+    if missing_resources:
+        fail(
+            "the read-only operator grant is missing Kubernetes resources needed "
+            "for native workload diagnosis: "
+            + ", ".join(sorted(missing_resources))
+        )
+    print("operator diagnostics: read-only Kubernetes grant covers native workload diagnosis")
 
 
 main()

@@ -114,7 +114,7 @@ refuses without one. One driver per namespace covers the scenario rows:
 - **F6, F8, F9** — immutable artifact refusal, the observed→desired contract change,
   `sol plan` reading the declaration.
 - **G1–G9** — the six identity dimensions on logs, metrics and traces; one request's
-  three signals agreeing; `sol logs`/`sol status`/`sol open`/`sol check`; dashboard
+  three signals agreeing; `kubectl`/Grafana/Loki/Prometheus/`sol check`; dashboard
   proxy queries; the alert delivery route to a local receiver.
 - **H1–H2, H7** — DLQ, broker-unavailable-then-recovered, relay restart, telemetry
   loss, and deploy → failure → diagnose → rollback → recover.

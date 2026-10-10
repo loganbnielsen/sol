@@ -55,7 +55,7 @@ let error_or_fail = function
 
 let test_local_entry_point_is_the_literal_local_cluster () =
   let ctx =
-    ok_or_fail (Sol_cli_destination.resolve ~command:"status" ~local:true ~target:None)
+    ok_or_fail (Sol_cli_destination.resolve ~command:"rollback" ~local:true ~target:None)
   in
   check_string "local destination" "k3d-sol-local" (context_name ctx)
 ;;
@@ -64,7 +64,7 @@ let test_local_wins_even_if_a_target_is_supplied () =
   let ctx =
     ok_or_fail
       (Sol_cli_destination.resolve
-         ~command:"status"
+         ~command:"rollback"
          ~local:true
          ~target:(Some "prod/aws/us-east-1"))
   in
@@ -74,13 +74,13 @@ let test_local_wins_even_if_a_target_is_supplied () =
 let test_top_level_without_target_fails_closed_naming_local_form () =
   let message =
     error_or_fail
-      (Sol_cli_destination.resolve ~command:"status" ~local:false ~target:None)
+      (Sol_cli_destination.resolve ~command:"rollback" ~local:false ~target:None)
   in
   check_bool "names --target" true (Sol_cli_string.contains ~needle:"--target" message);
   check_bool
-    "names the local spelling"
+    "names the local rollback spelling"
     true
-    (Sol_cli_string.contains ~needle:"sol local status" message)
+    (Sol_cli_string.contains ~needle:"sol local rollback" message)
 ;;
 
 let test_local_form_message_is_command_specific () =
@@ -101,7 +101,7 @@ let test_top_level_target_supplies_the_destination () =
     let ctx =
       ok_or_fail
         (Sol_cli_destination.resolve
-           ~command:"status"
+           ~command:"rollback"
            ~local:false
            ~target:(Some "prod/aws/us-east-1"))
     in
@@ -115,7 +115,7 @@ let test_target_without_context_fails_closed () =
     let message =
       error_or_fail
         (Sol_cli_destination.resolve
-           ~command:"status"
+           ~command:"rollback"
            ~local:false
            ~target:(Some "prod/aws/us-east-1"))
     in
@@ -132,7 +132,7 @@ let test_reserved_local_target_points_at_local_form () =
     let message =
       error_or_fail
         (Sol_cli_destination.resolve
-           ~command:"status"
+           ~command:"rollback"
            ~local:false
            ~target:(Some "prod/aws/us-east-1"))
     in
@@ -144,7 +144,7 @@ let test_reserved_local_target_points_at_local_form () =
 
 let test_resolution_is_deterministic () =
   let resolve () =
-    Sol_cli_destination.resolve ~command:"logs" ~local:false ~target:None
+    Sol_cli_destination.resolve ~command:"rollback" ~local:false ~target:None
   in
   match resolve (), resolve () with
   | Error a, Error b -> check_string "same error twice" a b

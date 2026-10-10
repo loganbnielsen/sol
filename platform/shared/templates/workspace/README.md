@@ -53,7 +53,6 @@ sol local run        # run all workspace services locally (dune exec, dev env va
 
 ```bash
 sol up          # build images and deploy to cluster
-sol local status   # show running pods and endpoints
 sol migrate     # apply database migrations
 sol rollback    # roll back all services to previous image
 ```

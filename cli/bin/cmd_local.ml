@@ -438,9 +438,6 @@ let cmd =
   Cmd.group
     (Cmd.info "local" ~doc:"Operate on Sol's own local cluster (k3d)")
     [ infra_cmd
-    ; Cmd_status.local_cmd
-    ; Cmd_logs.local_cmd
-    ; Cmd_fn.local_cmd
     ; Cmd_rollback.local_cmd
     ; Cmd_migrate.local_cmd
     ; Cmd_releases.local_cmd

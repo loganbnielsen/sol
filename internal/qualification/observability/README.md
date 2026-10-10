@@ -1,5 +1,12 @@
 # Observability qualification workstream
 
+> **Historical workstream:** the CLI query and status interfaces described below
+> were removed with the operational-wrapper cleanup (#1327). The run records and
+> matrix preserve evidence of the behavior that existed at the time; they are not
+> current Sol CLI contracts. Current operational investigation uses the native
+> Grafana, Loki, Prometheus, Kubernetes, and provider interfaces. Sol's deployment
+> qualification still verifies its own lifecycle postconditions.
+
 This directory qualifies one question:
 
 > **When something goes wrong in a Sol workspace, do the observability and

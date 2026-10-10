@@ -33,17 +33,12 @@
   cmd_deploy
   cmd_destroy
   cmd_deploy_event
-  cmd_status
-  cmd_logs
-  cmd_fn
-  cmd_open
   cmd_migrate
   cmd_rollback
   cmd_secret
   cmd_target
   cmd_releases
   cmd_deployments
-  cmd_alert
   cmd_cloud_tf
   cmd_grants
   cmd_uninstall

@@ -17,10 +17,6 @@ let () =
       ; Cmd_up.cmd
       ; Cmd_deploy.cmd
       ; Cmd_destroy.cmd
-      ; Cmd_status.cmd
-      ; Cmd_logs.cmd
-      ; Cmd_fn.cmd
-      ; Cmd_open.cmd
       ; Cmd_migrate.cmd
       ; Cmd_rollback.cmd
       ; Cmd_secret.cmd
@@ -28,7 +24,6 @@ let () =
       ; Cmd_releases.cmd
       ; Cmd_deployments.cmd
       ; Cmd_assets.cmd
-      ; Cmd_alert.cmd
       ; Cmd_grants.cmd
       ; Cmd_uninstall.cmd
       ]

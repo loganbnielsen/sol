@@ -32,6 +32,12 @@ let manifest_primitive = function
   | Sol_cli_deployment_plan.Fn -> Sol_cli_manifest.Fn
 ;;
 
+let pod_expectation_of_primitive primitive =
+  match manifest_primitive primitive with
+  | Fn -> Sol_cli_rollout_diagnosis.Ephemeral
+  | Svc | Worker -> Sol_cli_rollout_diagnosis.Continuous
+;;
+
 let push_image_ref ~workspace ~sha spec =
   Sol_cli_deployment_plan.image_ref
     ~registry:push_registry
@@ -108,9 +114,7 @@ let wait_for_service_rollout ~ctx spec exec =
           failed. Keep it as the primary cause and attach the live diagnosis as
           context: a later healthy probe must never replace or obscure the first
           failure. *)
-       let pod_expectation =
-         Sol_cli_status.pod_expectation_of_primitive (manifest_primitive spec.primitive)
-       in
+       let pod_expectation = pod_expectation_of_primitive spec.primitive in
        let diagnosis =
          match
            Sol_cli_rollout_diagnosis.diagnose_service_live

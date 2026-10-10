@@ -283,7 +283,7 @@ let report_surplus_workloads ~workspace (plan : Sol_cli_deployment_plan.t) =
 let report_apply_success ~workspace ~facts plan =
   let summary = Sol_cli_up_execution.post_deploy_summary ~facts plan in
   Printf.printf "Done. %d service(s) deployed.\n" summary.deployed_count;
-  Printf.printf "Run 'sol local status' to check pod health.\n";
+  Printf.printf "Use kubectl to inspect the local workloads.\n";
   if summary.pending_migrations > 0
   then
     Printf.printf

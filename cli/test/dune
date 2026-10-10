@@ -161,13 +161,6 @@
 
 (rule
  (alias runtest)
- (deps ../bin/main.exe)
- (action
-  (bash
-   "set -u\nsol=$(pwd)/%{deps}\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\ncd \"$tmp\"\ntouch sol.yml\nmkdir sol\nexpect() { want=$1; shift; if \"$sol\" \"$@\" >out 2>&1; then got=0; else got=$?; fi; if [ \"$got\" != \"$want\" ]; then echo \"sol $*: expected exit $want, got $got\" >&2; cat out >&2; exit 1; fi; }\nexpect 124 alert test\ngrep -F -- '--target' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n' > sol/environments.yml\nexpect 2 alert test --target prod/aws/us-east-1\ngrep -F 'does not satisfy the alert-delivery contract' out >/dev/null\nprintf 'prod:\\n  targets:\\n    aws/us-east-1:\\n      alert_receiver_type: webhook\\n      alert_receiver_url: https://hooks.example.test/x\\n      alert_owner: ops@example.test\\n      alert_runbook_url: https://runbooks.example.test/x\\n' > sol/environments.yml\nexpect 0 alert test --target prod/aws/us-east-1 --dry-run\ngrep -F '\"alertname\":\"SolSyntheticAlert\"' out >/dev/null\ngrep -F '/api/v2/alerts' out >/dev/null")))
-
-(rule
- (alias runtest)
  (deps
   ../bin/main.exe
   (source_tree ../../platform))
@@ -180,31 +173,13 @@
  (deps ../bin/main.exe)
  (action
   (bash
-   "set -eu\nsol=$(pwd)/../bin/main.exe\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nexpect() {\n  want=$1; shift\n  if \"$@\" >\"$tmp/out\" 2>\"$tmp/err\"; then got=0; else got=$?; fi\n  if [ \"$got\" != \"$want\" ]; then\n    echo \"expected exit $want, got $got: $*\" >&2; cat \"$tmp/err\" >&2; exit 1\n  fi\n}\nmkdir -p \"$tmp/outside\" \"$tmp/ws/app/payments/charge_svc\"\ncd \"$tmp/outside\"\nexpect 1 \"$sol\" check\ngrep -F 'sol: not inside a Sol workspace' \"$tmp/err\" >/dev/null\ncd \"$tmp/ws\"\ntouch sol.yml\nexpect 2 \"$sol\" check\ngrep -F 'Dockerfile is missing' \"$tmp/err\" >/dev/null\nif [ -n \"$(tail -n 1 \"$tmp/err\")\" ]; then :; else echo 'sol check printed a blank line after its findings' >&2; exit 1; fi\nexpect 1 \"$sol\" new svc bad\ngrep -Fx 'error: expected domain/name (e.g. payments/charge), got \"bad\"' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" new workspace sol.yml\ngrep -Fx 'error: \"sol.yml\" already exists' \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" local rollback --commit \"\"\ngrep -F 'must not be blank' \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" open logs --links --observability-backend self_hosted_durable --base-domain \"  \"\ngrep -F 'must not be blank' \"$tmp/err\" >/dev/null\n")))
+   "set -eu\nsol=$(pwd)/../bin/main.exe\ntmp=$(mktemp -d)\ntrap 'rm -rf \"$tmp\"' EXIT\nexpect() {\n  want=$1; shift\n  if \"$@\" >\"$tmp/out\" 2>\"$tmp/err\"; then got=0; else got=$?; fi\n  if [ \"$got\" != \"$want\" ]; then\n    echo \"expected exit $want, got $got: $*\" >&2; cat \"$tmp/err\" >&2; exit 1\n  fi\n}\nmkdir -p \"$tmp/outside\" \"$tmp/ws/app/payments/charge_svc\"\ncd \"$tmp/outside\"\nexpect 1 \"$sol\" check\ngrep -F 'sol: not inside a Sol workspace' \"$tmp/err\" >/dev/null\ncd \"$tmp/ws\"\ntouch sol.yml\nexpect 2 \"$sol\" check\ngrep -F 'Dockerfile is missing' \"$tmp/err\" >/dev/null\nif [ -n \"$(tail -n 1 \"$tmp/err\")\" ]; then :; else echo 'sol check printed a blank line after its findings' >&2; exit 1; fi\nexpect 1 \"$sol\" new svc bad\ngrep -Fx 'error: expected domain/name (e.g. payments/charge), got \"bad\"' \"$tmp/err\" >/dev/null\nexpect 1 \"$sol\" new workspace sol.yml\ngrep -Fx 'error: \"sol.yml\" already exists' \"$tmp/err\" >/dev/null\nexpect 124 \"$sol\" local rollback --commit \"\"\ngrep -F 'must not be blank' \"$tmp/err\" >/dev/null")))
 
 (rule
  (alias runtest)
  (deps ../bin/main.exe test_target_status.sh)
  (action
   (run bash %{dep:test_target_status.sh} %{dep:../bin/main.exe})))
-
-(rule
- (alias runtest)
- (deps ../bin/main.exe test_open_infra.sh)
- (action
-  (run bash %{dep:test_open_infra.sh} %{dep:../bin/main.exe})))
-
-(rule
- (alias runtest)
- (deps ../bin/main.exe test_open_options.sh)
- (action
-  (run bash %{dep:test_open_options.sh} %{dep:../bin/main.exe})))
-
-(rule
- (alias runtest)
- (deps ../bin/main.exe test_logs_selector.sh)
- (action
-  (run bash %{dep:test_logs_selector.sh} %{dep:../bin/main.exe})))
 
 (alias
  (name ci-unit)

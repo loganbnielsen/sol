@@ -88,13 +88,6 @@ val replace
   -> file:string
   -> (Sol_cli_process.output, Sol_cli_process.error) result
 
-val create_job_from_cronjob
-  :  ctx:Sol_cli_kube_destination.context
-  -> cronjob:string
-  -> job_name:string
-  -> namespace:string
-  -> (Sol_cli_process.output, Sol_cli_process.error) result
-
 val delete
   :  ctx:Sol_cli_kube_destination.context
   -> resource:string

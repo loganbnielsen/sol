@@ -264,7 +264,7 @@ Exercise that route without a real incident:
 
 ```bash
 kubectl -n monitoring port-forward svc/prometheus-alertmanager 9093:9093 &
-sol alert test --target pilot/aws/us-east-1
+# Use Alertmanager's own test/receiver workflow to verify end-to-end delivery.
 ```
 
 The command's exit status proves the route is configured and reachable; the
@@ -445,7 +445,7 @@ a blocker that can be named now is named now rather than after the billable
 boundary. The deploy identity's cluster access is a temporary kubeconfig for that
 run: Sol never writes your `~/.kube/config` or the target file, and never reaches
 the cluster as the provisioning identity (`DEC-058`, `DEC-034`). The deploy reconciles
-that stage in place, and it is what `sol status`, `sol logs` and `sol migrate` need:
+that stage in place, and it is what `sol migrate` needs:
 those read the target's declared `kube_context`, so run the printed
 `deploy_kubeconfig_command` once and add the context name it writes. Where a provider
 declares no deploy identity — GCP today —
@@ -555,7 +555,7 @@ sol local infra up        # provision local k3d cluster + infra
 sol local secret set POSTGRES_URL --value postgresql://postgres:dev@postgresql.postgresql.svc.cluster.local:5432/dev
 sol local secret set SOL_API_KEY --value dev-internal-key
 sol up                    # verify the secrets, then build and apply the workloads
-sol local status  # show running pods and endpoints
+kubectl get pods --all-namespaces  # inspect local workloads
 sol local migrate # apply database migrations
 ```
 

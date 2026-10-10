@@ -1919,43 +1919,6 @@ let test_release_label_lives_at_the_verifier_jsonpath () =
     release_id
 ;;
 
-let test_taxonomy_labels_match_dashboard_link_normalization () =
-  let spec =
-    { svc_spec with
-      domain = "Payments_Team"
-    ; namespace = namespace ~workspace:"Sol_Obs_Review_App" ~domain:"Payments_Team"
-    }
-  in
-  let _, workload = render_spec_ok ~workspace:"Sol_Obs_Review_App" spec in
-  assert_contains
-    "workspace label matches sol open's normalization"
-    workload
-    {|workspace: "sol-obs-review-app"|};
-  assert_contains
-    "domain label matches sol open's normalization"
-    workload
-    {|domain: "payments-team"|};
-  let dashboard_url =
-    match
-      Sol_cli_open.url
-        ~base_url:"http://localhost:3000"
-        ~workspace:"Sol_Obs_Review_App"
-        ~kind:Sol_cli_open.Dashboard
-        (Sol_cli_open.Domain "Payments_Team")
-    with
-    | Ok url -> url
-    | Error msg -> Windtrap.fail msg
-  in
-  assert_contains
-    "dashboard link uses the identical normalized workspace"
-    dashboard_url
-    "var-workspace=sol-obs-review-app";
-  assert_contains
-    "dashboard link uses the identical normalized domain"
-    dashboard_url
-    "var-domain=payments-team"
-;;
-
 let test_taxonomy_labels_not_in_selector () =
   let _, workload = render_spec_ok svc_spec in
   assert_contains
@@ -3032,11 +2995,6 @@ let%test "taxonomy_labels: release label sits at the verifier's jsonpath" =
 ;;
 
 let%test "taxonomy_labels: not in selector" = test_taxonomy_labels_not_in_selector ()
-
-let%test "taxonomy_labels: matches sol open dashboard link normalization" =
-  test_taxonomy_labels_match_dashboard_link_normalization ()
-;;
-
 let%test "taxonomy_labels: label is the release id" = test_release_label_is_release_id ()
 
 let%test "taxonomy_labels: label does not leak the image tag" =

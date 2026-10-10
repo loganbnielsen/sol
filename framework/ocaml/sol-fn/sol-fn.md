@@ -118,11 +118,8 @@ let () =
 
 `-fn` is formally a **run-once Kubernetes execution primitive**, not "a cron
 abstraction" — `Fn.Make(F).run` above has no cron awareness at all; it runs
-`F.run` exactly once and exits. Cron is one invocation mechanism Sol wires
-up (a Kubernetes `CronJob`); manual invocation (`sol fn run`, below) is the
-other. Both create a Kubernetes `Job` from the *same* deployed `CronJob`'s
-`jobTemplate` — there is exactly one execution definition, not one per
-invocation source.
+`F.run` exactly once and exits. Sol schedules it with Kubernetes `CronJob`; Kubernetes creates a `Job` from
+the declared template for each scheduled invocation.
 
 Two pieces of that `jobTemplate` are explicit `sol.toml` decisions rather
 than Kubernetes defaults Sol silently inherited:
@@ -139,12 +136,7 @@ backoff_limit = 3                  # default: 3
   execution can outlast its schedule interval either lets the next tick
   overlap it (`allow`, the default, preserving pre-FEAT-079 behavior),
   skips the next tick (`forbid`), or cancels the running execution and
-  starts the next one (`replace`). **A manual invocation via `sol fn run` is
-  never constrained by this value** — it is not a scheduled run, so
-  `concurrencyPolicy` (which only Kubernetes' CronJob controller consults)
-  never applies to it. Do not read `scheduled_concurrency = "forbid"` as "at
-  most one execution of this function, period" — that is a different,
-  stronger guarantee Sol does not currently provide.
+  starts the next one (`replace`).
 - **`backoff_limit`** renders as `jobTemplate.spec.backoffLimit` (default:
   `3`, matching pre-FEAT-079 behavior). This is the end-to-end operational
   meaning of a handler's `Error _` above: `F.run ()` returning `Error _` (or
@@ -166,20 +158,3 @@ Both settings are part of a release's identity and of its recorded boundary
 reconstructs the `CronJob` with the policies the release recorded — so a
 function deployed as `scheduled_concurrency = "forbid"` with
 `backoff_limit = 0` comes back that way, not as the `allow`/`3` defaults.
-
-## Manual invocation: `sol fn run` (FEAT-079)
-
-```
-sol fn run <domain>/<name> [--target ENV/PROVIDER/REGION]
-sol local fn run <domain>/<name>
-```
-
-Creates one ad-hoc Kubernetes `Job` from the deployed `-fn`'s `CronJob`
-(`kubectl create job --from=cronjob/...`), so a manual run executes exactly
-the same `jobTemplate` — image, env, secrets, resources, `backoff_limit` —
-that the next scheduled tick would. Sol does not reconstruct or store a
-second copy of the execution definition from `sol.toml`/local source to do
-this: the already-deployed `CronJob` is authoritative, the same way a
-recorded release is authoritative for `sol rollback` (FEAT-066).
-
-Not constrained by `scheduled_concurrency` — see above.

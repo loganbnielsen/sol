@@ -172,8 +172,8 @@ the contracts encode is worth one sentence each:
 - **deploy** mutates application objects through a namespace-scoped EKS access
   entry, and explicitly denies infrastructure and IAM mutation, so it cannot
   escalate or grant itself administration;
-- **operator** is read-only over the cluster and the state bucket — enough for
-  `sol status`, `sol logs` and `sol open` to explain an unhealthy workload.
+- **operator** is read-only over the cluster and the state bucket — enough for deployment operations. For ongoing diagnosis, use Kubernetes and the
+  configured observability/provider tools.
 
 ### 4.3 Run the deploy
 
@@ -230,7 +230,7 @@ The environment for prod/aws/us-east-1 is provisioned.
 
 Done. 1 service(s) deployed.
   →  http://localhost:8080  (acme-payments/charge-svc)
-Run 'sol status' to check pod health.
+Use Kubernetes tooling to inspect workload health after deployment.
 ```
 
 **One action may be required, and Sol names it exactly.** When the zone that
@@ -241,11 +241,10 @@ wait is a real check against a public resolver, so a delegation that has not
 propagated is reported rather than assumed — and a resolver Sol cannot query is
 `UNKNOWN`, never a silent success.
 
-**What a deployment run needs from your machine afterwards.** Sol establishes its
-own cluster access for *a deploy run*. `sol status`, `sol logs`, `sol migrate` and
-`sol open` read the target's declared destination, so they need the persistent
-context: run the command the cluster root prints and add the context name it writes
-to the target once.
+**What later operations need from your machine.** Sol establishes its own cluster
+access for *a deploy run*. For ongoing diagnosis, use Kubernetes and provider
+tools with your own operator context; Sol does not expose a separate operational
+status, logs, or dashboard interface.
 
 ```text
 deploy_kubeconfig_command   aws eks update-kubeconfig --region us-east-1 --name acme-prod --alias acme-prod-deploy --role-arn arn:aws:iam::111122223333:role/sol-deploy

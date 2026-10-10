@@ -17,7 +17,6 @@ deploying command needs, and it is always the positional:
 
 ```bash
 sol deploy prod/aws/us-east-1       # target-addressed: the target is the positional
-sol status payments --target prod/aws/us-east-1
 ```
 
 Two layers, doing two different jobs (`DEC-016`):

@@ -25,9 +25,9 @@ printf '\n[service]\ncalls = ["checkout/checkout_svc"]\n' >> app/payments/charge
 # No -fn app exists in the scaffold or examples
 # yet, and this is the only place a real cluster is already up --
 # add one here (rather than a whole new example app) to exercise
-# scheduled_concurrency/backoff_limit rendering and `sol fn run`
-# against a real deployed CronJob, in the same sol up pass as
-# everything else so this doesn't need its own health-wait cycle.
+# scheduled_concurrency/backoff_limit rendering
+# on a real deployed CronJob, in the same sol up pass as everything
+# else so this does not need its own health-wait cycle.
 # `sol new fn` appends _fn to the given name itself (the same way
 # `sol new svc checkout/checkout` above produced checkout_svc), so
 # passing "heartbeat" here (not "heartbeat_fn") is what actually
@@ -258,9 +258,8 @@ fi
 echo "deployment event written, listed, joined to its release and immutable OK"
 
 # `scheduled_concurrency` and `backoff_limit` render into the
-# deployed CronJob, and `sol fn run` creates a real ad-hoc Job from
-# it. Both are fast kubectl reads/creates -- no health-wait loop
-# needed, unlike the HTTP-serving workloads above.
+# deployed CronJob, and remains available through the Kubernetes CronJob API. It needs no
+# health-wait loop, unlike the HTTP-serving workloads above.
 fn_ns=$(kubectl get ns -o name | sed 's|namespace/||' | grep -- '-ops$' | head -1 || true)
 if [ -z "$fn_ns" ]; then
   echo "::error::FEAT-079: could not locate the heartbeat_fn namespace"
@@ -281,28 +280,3 @@ case "$fn_spec" in
   *) echo "::error::FEAT-079: CronJob $fn_cronjob is missing backoffLimit: 5"; exit 1 ;;
 esac
 echo "scheduled_concurrency/backoff_limit rendered into the deployed CronJob OK"
-
-jobs_before=$(kubectl -n "$fn_ns" get jobs -o name | wc -l)
-sol local fn run "ops/heartbeat_fn"
-jobs_after=$(kubectl -n "$fn_ns" get jobs -o name | wc -l)
-if [ "$jobs_after" -le "$jobs_before" ]; then
-  echo "::error::FEAT-079: 'sol local fn run' did not create a new Job in $fn_ns"
-  exit 1
-fi
-manual_job=$(kubectl -n "$fn_ns" get jobs -o name | sed 's|job.batch/||' | grep -- '-manual-' | head -1 || true)
-if [ -z "$manual_job" ]; then
-  echo "::error::FEAT-079: no manually-created Job found in $fn_ns"
-  exit 1
-fi
-# `kubectl create job --from=cronjob/X` sets an ownerReference back
-# to the source CronJob (confirmed by this job's own run) -- the
-# positive check that actually matters is that the reference names
-# the *right* CronJob, proving `sol fn run` really did copy from
-# the deployed one rather than some other source.
-job_owner_kind=$(kubectl -n "$fn_ns" get job "$manual_job" -o jsonpath='{.metadata.ownerReferences[0].kind}')
-job_owner_name=$(kubectl -n "$fn_ns" get job "$manual_job" -o jsonpath='{.metadata.ownerReferences[0].name}')
-if [ "$job_owner_kind" != "CronJob" ] || [ "$job_owner_name" != "$fn_cronjob" ]; then
-  echo "::error::FEAT-079: manual Job $manual_job's owner is '$job_owner_kind/$job_owner_name', expected 'CronJob/$fn_cronjob'"
-  exit 1
-fi
-echo "'sol fn run' created Job $manual_job from the deployed CronJob $fn_cronjob OK"

@@ -23,8 +23,8 @@ deploys it.
 Concretely: replace a generated service's `bin/main.ml` with
 `print_endline "hello world"`. `dune build` succeeds. `docker build` succeeds.
 `sol deploy`/`kubectl apply` succeeds. The pod then exits immediately, never
-binds a port, and every downstream check (readiness probe, `sol status`,
-CI's health-poll loop) reports it unhealthy — the *only* place this gets
+binds a port, and every downstream check (readiness probe,
+Sol's deployment readiness verification) reports it unhealthy — the *only* place this gets
 caught, and only after it's already running.
 
 ## Discovery contract — purely structural, content never inspected
@@ -291,7 +291,7 @@ the normal Secret or ExternalSecret path.
 | Layer | Enforced by | When |
 |---|---|---|
 | Directory naming + Dockerfile presence | `discover_services` (string/filesystem check) | Before deploy — determines *what gets generated*, not whether it's correct |
-| Port bound, `/healthz` responds | Kubernetes probes, `sol status`, CI health-poll | After deploy, repeatedly |
+| Port bound, `/healthz` responds | Kubernetes probes and Sol deploy readiness verification | During rollout and after deploy |
 | `/metrics` format | Nothing | Never — silent failure only |
 | SIGTERM drain | Nothing | Never — degrades gracefully into a harder kill, no error |
 | Env var names read correctly | Nothing | Never — surfaces as a runtime connection failure |

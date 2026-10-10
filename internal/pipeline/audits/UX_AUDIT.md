@@ -133,7 +133,7 @@ sol cloud init --aws    # or --gcp
 
 **Invariants:**
 * [ ] The command runs to completion without requiring any manual cloud console steps
-* [ ] After the command completes, `sol status` shows a reachable cluster with no manual kubeconfig setup
+* [ ] After deploy, Sol reports readiness from its rollout verification; use Kubernetes tooling for further diagnosis
 * [ ] The guide's list of provisioned resources matches what actually exists in the cloud account
 * [ ] The auditor did not run any `terraform`, `aws`, `gcloud`, or `kubectl` commands themselves
 
@@ -201,17 +201,17 @@ After shipping, the engineer needs to observe and operate their system without l
 ### Reproduction gate
 
 ```bash
-sol logs charge_svc       # stream recent logs
+kubectl logs -n <namespace> deploy/charge-svc       # inspect workload logs
 sol migrate               # apply pending migrations
-sol status                # show all running services and their health
+kubectl get pods -n <namespace>                  # inspect workload state
 sol new svc payments/refund  # add a new service
 sol deploy <target>       # deploy the new service alongside existing ones
 ```
 
 **Invariants:**
-* [ ] `sol logs <service>` streams log output without kubectl knowledge
+* [ ] the team can use its configured logs backend or Kubernetes
 * [ ] `sol migrate` applies pending migrations and confirms idempotency when run twice
-* [ ] `sol status` shows health, version, and endpoint for every deployed service
+* [ ] deploy verifies workload readiness and returns declared endpoints
 * [ ] A newly scaffolded service appears in the next `sol deploy` automatically — no manifest editing required
 
 ---

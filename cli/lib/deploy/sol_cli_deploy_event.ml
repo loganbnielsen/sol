@@ -56,7 +56,7 @@ let resolve_push_url ~backend ~explicit_url =
   match explicit_url with
   | Some url -> Explicit url
   | None ->
-    (match (backend : Sol_cli_observability_url.backend) with
+    (match (backend : Sol_cli_observability_backend.backend) with
      | Local | Self_hosted_durable -> Auto_detect
      | External ->
        Skip

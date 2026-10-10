@@ -17,6 +17,6 @@ type push_url_decision =
   | Skip of string
 
 val resolve_push_url
-  :  backend:Sol_cli_observability_url.backend
+  :  backend:Sol_cli_observability_backend.backend
   -> explicit_url:string option
   -> push_url_decision
