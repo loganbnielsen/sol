@@ -115,8 +115,8 @@ not fan values out to application Secrets.
 
 The substrate checks the shared database input before proceeding, and the TLS
 contract Job checks its Kafka inputs before it starts. Application Secrets
-contain the unit's declared keys plus the workload defaults `POSTGRES_URL` and
-`SOL_API_KEY`. `sol secret status TARGET` reports owners and presence without
+contain the unit's declared keys plus the workload default `POSTGRES_URL`.
+`sol secret status TARGET` reports owners and presence without
 printing values.
 
 Each required application key must declare `sol` or `external` authority in the
@@ -275,11 +275,17 @@ JWKS URL must use the same HTTPS origin. Discovery, key-fetch, or validation
 failures reject the request; workload authentication never falls back to an
 application-provided key source.
 
-Routes that use `` `Api_key`` auth expect the caller to send `x-api-key`.
-`sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
-`SOL_API_KEY`. Sol declares `SOL_API_KEY` as a required unit key. Its target authority selects
-either the unit-scoped Sol-managed Secret or an ESO-managed `ExternalSecret`; Sol does not emit a
-placeholder value.
+The built-in `/metrics` endpoint can require the shared key: a unit that passes
+`` `Api_key`` as `metrics_auth` answers `GET /metrics` only to a caller presenting
+`x-api-key`, and `sol-svc` reads the expected value from `SOL_API_KEY_FILE` first, then
+`SOL_API_KEY` (once, at startup). A unit that does not protect `/metrics` does not require
+`SOL_API_KEY`; a unit that does declares it in its `sol.toml` `[infra.env] secrets`. Its
+target authority selects either the unit-scoped Sol-managed Secret or an ESO-managed
+`ExternalSecret`; Sol does not emit a placeholder value.
+
+Route-level `` `Api_key`` authentication is **not implemented**: routes are either internal
+(`` `Workload_identity``, validated against the declared `calls` graph) or external (no
+authentication). Endpoint-level API-key auth is future work.
 
 ## Summary
 

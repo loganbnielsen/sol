@@ -589,11 +589,24 @@ let test_placeholder_render_redacts_values () =
   Unix.putenv "POSTGRES_URL" "";
   assert_absent "GitOps emits no placeholder Secret" workload "kind: Secret";
   assert_contains "GitOps projects POSTGRES_URL" workload "key: POSTGRES_URL";
-  assert_contains "GitOps projects SOL_API_KEY" workload "key: SOL_API_KEY";
+  assert_absent
+    "a key no unit declares is not a workload default"
+    workload
+    "key: SOL_API_KEY";
   assert_absent
     "GitOps placeholder redacts the value"
     workload
     "postgresql://user:pass@db.example.com:5432/app"
+;;
+
+(* 1344b: SOL_API_KEY is a unit secret, not a workload default. A unit that serves or calls
+   `Api_key` routes declares it; every other unit stops requiring a value it never reads. *)
+let test_declared_api_key_is_projected () =
+  let _ns, workload = render_spec_ok { svc_spec with secrets = [ "SOL_API_KEY", "" ] } in
+  assert_contains
+    "a unit that declares SOL_API_KEY gets the reference"
+    workload
+    "key: SOL_API_KEY"
 ;;
 
 let test_svc_default_redpanda_admin_url () =
@@ -2886,6 +2899,10 @@ let%test "svc: ordinary deploy render emits no Secret values" =
 
 let%test "svc: GitOps placeholder render redacts values" =
   test_placeholder_render_redacts_values ()
+;;
+
+let%test "svc: a declared SOL_API_KEY is projected" =
+  test_declared_api_key_is_projected ()
 ;;
 
 let%test "svc: default redpanda admin" = test_svc_default_redpanda_admin_url ()

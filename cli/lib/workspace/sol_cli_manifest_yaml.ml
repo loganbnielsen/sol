@@ -56,7 +56,12 @@ end
 
 open Sol_cli_manifest_cluster_env
 
-let default_secrets = [ "POSTGRES_URL", ""; "SOL_API_KEY", "" ]
+(* Every unit receives POSTGRES_URL until target capabilities replace it with a
+   projection of the database the target provides. SOL_API_KEY is not a workload
+   default: only a unit that serves or calls `Api_key` routes declares it, in its
+   sol.toml [infra.env] secrets, so the other units stop requiring a value they
+   never read. *)
+let default_secrets = [ "POSTGRES_URL", "" ]
 let runtime_secret_name = "sol-secrets"
 
 let required_secret_keys ?(transport = Plaintext) declared =
