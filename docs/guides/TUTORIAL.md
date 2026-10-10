@@ -471,11 +471,8 @@ of the service contract.
 These names are deterministic from the Helm release names and workspace/domain
 names chosen by `sol local infra up`.
 
-After `sol up` finishes, check what's running:
-
-```bash
-sol local status
-```
+After `sol up` finishes, Sol verifies workload readiness. For inspection of the
+local cluster, use `kubectl` and the local Grafana interface.
 
 ```
 Namespace: pluto-comms
@@ -606,14 +603,6 @@ Sol registers these metrics automatically when `?ot` is wired in the service ent
 
 Unlike metrics, tracing isn't automatic — a handler opts in by wrapping its work in `Obs_eio.with_span`, as `POST /charges` does (Part 2). `sol local infra up` provisions Tempo and wires `TEMPO_URL` in automatically, so any handler that calls `with_span` gets a real trace with no extra setup. Click a `charge-svc` log line in the Loki view above: next to `trace_id=...` Grafana shows a **Tempo** button (a derived-field link, no copy-pasting IDs) that jumps straight to that request's span waterfall in **Explore → Tempo**.
 
-The CLI reaches the same traces without you needing the datasource uid or the query syntax: `sol open traces` builds a Tempo TraceQL query from the `workspace`/`domain`/`service` identity Sol stamps on every span, so it returns exactly that scope's traces even when several workspaces or domains share a service name.
-
-```bash
-sol open traces payments/charge-svc            # one unit's traces, in Grafana Explore
-sol open traces payments --links               # the whole domain's, printed as a URL
-sol open traces resource/rds/acme-postgres     # no traces view: managed resources don't emit Sol spans
-```
-
 Tracing is `-svc`-only for now. `notify-worker` receives the same trace context and logs the matching `trace_id` for correlation, but doesn't wrap its work in a span, so it doesn't emit its own spans to Tempo yet.
 
 ### Alerting
@@ -727,14 +716,12 @@ sol new event <team>/<name>                       add a typed Kafka event
 
 sol local infra up                                        provision local k3d cluster
 sol local infra down                                      tear down the cluster
-sol local status                                    show running infra endpoints
 sol local run [--scope DOMAIN[/UNIT]]                 run services as native processes (fast iteration)
 
 sol plan TARGET                                   print merged app/resource/service plan
 sol up [--scope DOMAIN[/UNIT]] [--dry-run] [--tag]  build images and deploy to local cluster
 sol deploy TARGET [--image-tag TAG] [--registry URL]  deploy pre-built images (CI mode)
 sol deploy TARGET --emit-to DIR [--image-tag TAG] ...  write YAML for Argo CD (GitOps mode)
-sol status [domain]                               show running pods and port-forward hints
 sol releases                                     list this workspace's recorded releases (id, environment, workloads)
 sol deployments                                  list this workspace's recorded deployment attempts, newest first (deployment id, release, time, commit, status)
 
@@ -745,15 +732,6 @@ sol migrate rollback                              roll back the last applied mig
 sol assets                                        where this sol's own assets come from (a checkout or an installed release), and check each one
 
 sol rollback RELEASE_ID                           restore a recorded release boundary (see `sol releases` for ids)
-sol logs --scope DOMAIN/UNIT [--release RELEASE_ID] [--no-follow] [--tail=N]  stream logs from a deployed service
-sol open logs [SCOPE] [--links]                   open Grafana Explore logs (browser unless --links)
-sol open traces [SCOPE] [--links]                 open Grafana Explore traces for the scope
-sol open metrics [SCOPE] [--links]                open Grafana metrics dashboard
-sol open dashboard [SCOPE] [--links]              open Grafana workspace/service dashboard
-sol open infra --target TARGET [--links]          open the target's infrastructure view (no SCOPE: infrastructure is target-addressed)
-#   SCOPE: omit for workspace, domain, domain/service, or resource/<type>/<name>
-#   also accepts --observability-backend {local|self_hosted_durable|external},
-#   --base-domain DOMAIN, and TARGET
 
 sol secret set <KEY> --target ENV/PROVIDER/REGION --value <VAL> [--domain DOMAIN]   create or update a secret
 sol secret list --target ENV/PROVIDER/REGION [--domain DOMAIN]                      list secret keys (values never printed)
@@ -782,10 +760,7 @@ sol local secret set|list|delete ...                                            
 # group, while a group whose worker really is gone from the workspace still
 # refuses until `--confirm-group-change` acknowledges it. That check reads the
 # recorded set while the workspace lease is held, so an update that won the lease
-# before the check is what the deploy measures against. `sol logs` accepts a single unit only; use `sol open logs` for a
-# domain or workspace view. `sol secret` takes `--domain` rather than
-# `--scope`, because secrets are addressed by Kubernetes namespace, not by
-# workload.
+# before the check is what the deploy measures against. `sol secret` takes `--domain` because secrets are addressed by Kubernetes namespace, not by workload.
 
 sol plan TARGET                                  preview target changes
 sol deploy TARGET                                reconcile infrastructure and workloads
@@ -871,16 +846,12 @@ cluster:
 
 ```bash
 sol deploy prod/aws/us-east-1        # explicitly against that target's cluster
-sol status --target prod/aws/us-east-1
-sol logs charge_svc --target prod/aws/us-east-1
 ```
 
 For Sol's own local cluster, the destination is the literal `k3d-sol-local`, so
 the local forms need no target at all:
 
 ```bash
-sol local status
-sol local logs charge_svc
 sol local rollback r-1a2b3c4d5e6f7890
 sol local migrate
 ```
@@ -953,9 +924,10 @@ Rollback restores every workload in the boundary under the release that applied 
 
 A verified rollback also corrects the workspace's consumer-group safety record to the restored release's own set: the workers that release deployed are what the next `sol deploy` compares against, so a rollback between releases with different consumers neither warns about a group the rollback brought back nor lets a real removal pass without `--confirm-group-change`. A rollback that fails verification leaves that record alone, and if the corrected record cannot be written the rollback says so rather than reporting a clean transition.
 
-To inspect what a running service is doing, `sol logs --scope <domain>/<unit>` streams live output directly from the cluster pod, following Sol's namespace convention automatically.
+For logs and traces, use Grafana/Loki with the workspace, domain, and service
+labels Sol injects into workloads.
 
-Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label identifies the deploy that last applied it; a scoped local `sol up` release record also retains untouched workloads and their earlier provenance. Use that workload label to select logs with `sol logs --release <id>`.
+Every `sol up` and `sol deploy` also records a release in the target's cluster: `sol releases` lists the recorded releases (content-addressed id, environment, workload count). A record is an immutable Kubernetes ConfigMap, so history cannot be edited in place. Each workload's `release` label identifies the deploy that last applied it; a scoped local `sol up` release record also retains untouched workloads and their earlier provenance. Use that workload label to filter telemetry in the configured observability tools.
 
 `sol deployments` lists the other half: one row per deploy *attempt* (minted `d-…` id, the release it tried to put in place, time, commit, actor with the source that identity came from, and whether the apply succeeded), newest first. A failed apply is still a deployment attempt, so it appears with `status` `apply_failed` while the release record — which claims the release exists — is only written on success. Attempts are recorded as immutable `sol-deployment-<id>` ConfigMaps, so two no-op deploys of the same release are two attempts pointing at one release rather than being collapsed. The same `deployment_id` is carried as a field on the deploy marker pushed to Loki, so a Grafana timeline can join an attempt to the authoritative record without telemetry ever being the system of record.
 

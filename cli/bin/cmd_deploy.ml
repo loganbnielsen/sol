@@ -547,8 +547,8 @@ let push_deploy_events ~ctx ~target_cfg ~loki_push_url events =
   let backend =
     Option.bind
       target_cfg.Sol_cli_config.observability_backend
-      Sol_cli_observability_url.backend_of_string
-    |> Option.value ~default:Sol_cli_observability_url.Local
+      Sol_cli_observability_backend.backend_of_string
+    |> Option.value ~default:Sol_cli_observability_backend.Local
   in
   try Cmd_deploy_event.push_all ~ctx ~backend ~explicit_url:loki_push_url events with
   | Eio.Cancel.Cancelled _ as exn -> raise exn
@@ -634,7 +634,7 @@ let report_apply_success (ctx : Sol_cli_deploy_run.context) plan results =
     Printf.printf "  ✓  namespace %s  image %s\n\n%!" r.Sol_cli_executor.namespace r.image);
   Printf.printf "\nDone. %d service(s) deployed.\n" (List.length ctx.services);
   print_service_urls (Sol_cli_deploy_run.http_services ~ctx:ctx.execution.cluster results);
-  Printf.printf "Run 'sol status' to check pod health.\n";
+  Printf.printf "Use Kubernetes tooling to inspect workload health after deployment.\n";
   report_surplus_workloads (Sol_cli_deploy_run.surplus_workloads ctx plan)
 ;;
 

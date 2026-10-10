@@ -122,10 +122,6 @@ let patch ~ctx ~resource ~name ~namespace ~patch_type ~patch =
 let create ~ctx ~file = kubectl ~ctx [ "create"; "-f"; file ]
 let replace ~ctx ~file = kubectl ~ctx [ "replace"; "-f"; file ]
 
-let create_job_from_cronjob ~ctx ~cronjob ~job_name ~namespace =
-  kubectl ~ctx [ "create"; "job"; job_name; "--from=cronjob/" ^ cronjob; "-n"; namespace ]
-;;
-
 let delete ~ctx ~resource ~name ~namespace =
   kubectl ~ctx [ "delete"; resource; name; "-n"; namespace; "--ignore-not-found" ]
   |> succeeded

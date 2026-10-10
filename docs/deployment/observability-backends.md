@@ -43,23 +43,8 @@ external_prometheus_username         = "123456"
 external_prometheus_password         = "<api key>"
 ```
 
-For read-side log snapshots, pass a Loki query URL and credentials to
-`sol logs --no-follow`:
-
-```bash
-export SOL_LOKI_USERNAME="123456"
-export SOL_LOKI_PASSWORD="<api key>"
-
-sol logs --scope payments/charge_svc \
-  --no-follow \
-  --observability-backend external \
-  --loki-base-url https://logs-prod-000.grafana.net
-```
-
-`--loki-username`/`--loki-password` are also supported for one-off use, and
-flags win over `SOL_LOKI_USERNAME`/`SOL_LOKI_PASSWORD` when both are set. Prefer
-`SOL_LOKI_PASSWORD` on shared hosts because command-line flags can be visible in
-shell history and process listings.
+For log queries, use the configured Loki/Grafana interface. Sol configures
+shipping and identity labels; it does not proxy read-side log queries.
 
 ## `self_hosted_durable` (AWS only)
 
@@ -206,7 +191,7 @@ pre-pilot checklist if a target depends on those indicators.
 rollout indicator above is Prometheus-queryable (kube-state-metrics), so the
 OBS-040 "skipped for v1" gap is closed without needing OBS-037's Loki-only
 release-event line: `SolRolloutFailed` catches a rollout that never becomes
-available, and `sol deployments` / `sol logs` remain the detail view.
+available, and Kubernetes plus the configured telemetry backend remain the detail view.
 
 ### The provider-neutral receiver contract (OBS-043)
 
@@ -242,21 +227,12 @@ Deviation: if you keep a Slack/PagerDuty receiver, the *contract* is still
 "configured, routable, owned" — override `alertmanager.config` as before. None
 of those adapters is shipped.
 
-### Proving the route: `sol alert test`
+### Verifying alert delivery
 
-```bash
-kubectl -n monitoring port-forward svc/prometheus-alertmanager 9093:9093 &
-sol alert test --target pilot/aws/us-east-1
-```
-
-It validates the same contract preflight does, then injects one synthetic alert
-into Alertmanager's v2 API, which routes it exactly like a fired rule.
-`--dry-run` prints the alert without sending it. This proves the *mechanism*:
-the route is configured and accepts the alert.
-
-What it cannot assert is that the named human received and **acknowledged** it —
-DEC-026 §8 requires a delivered-and-acknowledged synthetic alert, and that is
-HARDEN-002's live evidence, not a CLI exit status.
+Deployment preflight checks that a declared receiver has a supported type,
+routable endpoint, accountable owner, and runbook. To verify end-to-end delivery,
+use Alertmanager and the receiver's own test procedure; API acceptance does not
+prove that a person received and acknowledged an alert.
 
 ### Telemetry loss is a degraded mode, not a data-durability claim
 

@@ -198,51 +198,12 @@ Pipeline:
 
 ---
 
-### `sol status`
+### Post-deployment diagnosis
 
-**Module:** `cli/bin/cmd_status.ml` → `run`
-
-Reads live cluster state. No plan construction.
-
-1. Discover domains from `app/` directory.
-2. For each domain, derive the Kubernetes namespace via
-   `Sol_cli_deployment_plan.namespace_result`.
-3. Call `kubectl get pods -n <ns>` and print output.
-4. Query ClusterIP services in the namespace; print a port-forward hint for HTTP
-   services (port 80).
-
-**Reads:** live cluster via `Sol_cli_kubectl.get_raw`. **Writes:** nothing.
-
----
-
-### `sol logs`
-
-**Module:** `cli/bin/cmd_logs.ml`
-
-Derives the Kubernetes namespace and service name from a `domain/name` argument
-(or scans `app/` for a bare name). Checks whether the deployment exists, then
-emits one or both of:
-
-- A `kubectl logs -n <ns> -l app=<name> --follow` command/stream.
-- A Grafana Explore URL built by `Sol_cli_logs.grafana_explore_url` using the
-  unit's identity selector `{workspace="<ws>", domain="<domain>",
-  service="<k8s-name>"}` — an exact match on the labels Sol writes from
-  `Sol_cli_manifest_yaml.taxonomy_labels` (FRIC-029: Sol's Loki streams are keyed
-  by `service`/`team`, never `namespace`/`app`). The selector is built once, in
-  `Sol_cli_log_selector`, and shared by the Explore link, the printed-log query
-  and `--release` narrowing. It used to be a `service=~".*<name>.*"` substring,
-  which also returned a same-named unit in another workspace or domain, or a
-  longer name such as `fulfillment-worker-ts` (BUG-101).
-
-`--release <id>` (FEAT-069) narrows to one released identity, adding
-`release="<id>"` to the selector — or using `{release="<id>"}` alone when no
-`--scope` is given, since the id is workspace-unique by construction. The
-outcome order is deliberate: a malformed id fails before the cluster is
-consulted; a well-formed id with no recorded release fails naming the target and
-recent releases; a known release whose query returns nothing is an empty
-success, never reported as an unknown release.
-
-**Reads:** live cluster via kubectl. **Writes:** nothing.
+Sol's deployment lifecycle observes rollout state to verify that its own changes
+succeeded. Routine inspection after deployment belongs to Kubernetes, Grafana,
+Loki, Prometheus, and provider tooling; Sol does not maintain a separate status,
+logs, or dashboard interface.
 
 ---
 
@@ -632,7 +593,6 @@ Inline tests live in `cli/test/inline/`; process-level tests remain in `cli/test
 | Rollback target selection and `execute_rollback` paths | `test_rollback.ml` |
 | Deployment state ConfigMap read/write | `test_deployment_state.ml` |
 | Executor functions (`local`, `direct`, `gitops`) | `test_executor.ml` |
-| Logs URL generation (`Sol_cli_logs`) | `test_logs.ml` |
 
 **Guidance for new contributors:**
 

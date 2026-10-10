@@ -46,23 +46,6 @@ let test_boundary () =
   is_error "a non-object item" (Sol_cli_json.items ~what:"x" {|{"items":[1]}|})
 ;;
 
-let test_loki () =
-  is_error "no data.result" (Sol_cli_loki.parse_query_range_body {|{"status":"success"}|});
-  is_error
-    "a value that is not a pair"
-    (Sol_cli_loki.parse_query_range_body
-       {|{"status":"success","data":{"result":[{"values":[["1"]]}]}}|});
-  Windtrap.equal
-    Windtrap.int
-    ~msg:"an empty result is no lines"
-    0
-    (List.length
-       (ok
-          "empty"
-          (Sol_cli_loki.parse_query_range_body
-             {|{"status":"success","data":{"result":[]}}|})))
-;;
-
 let test_disk_quota () =
   is_error
     "a quota without usage"
@@ -118,7 +101,6 @@ let test_release_and_deployment_lists () =
 ;;
 
 let%test "REFAC-132: the boundary" = test_boundary ()
-let%test "REFAC-132: loki query results" = test_loki ()
 let%test "REFAC-132: disk quota" = test_disk_quota ()
 let%test "REFAC-132: migration status" = test_migration_status ()
 let%test "REFAC-132: release and deployment lists" = test_release_and_deployment_lists ()

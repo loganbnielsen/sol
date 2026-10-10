@@ -13,8 +13,6 @@ FILES = [
     "cli/lib/workspace/sol_cli_manifest_yaml.ml",
     "cli/lib/deploy/sol_cli_substrate.ml",
     "cli/lib/kube/sol_cli_rollout_diagnosis.ml",
-    "cli/bin/cmd_status.ml",
-    "cli/bin/cmd_logs.ml",
     "cli/lib/cloud/sol_cli_provider_capabilities.ml",
     "platform/cloud/modules/platform/platform_deploy_rbac.tf",
 ]
@@ -56,7 +54,9 @@ CASES = [
     ("the operator binding granted to another group", replace(
         "cli/lib/workspace/sol_cli_manifest_yaml.ml", '~group:"sol:operators"', '~group:"system:authenticated"')),
     ("a new read the operator cannot perform", replace(
-        "cli/bin/cmd_status.ml", '[ "get"; "ns"; ns ]', '[ "get"; "configmaps"; "-n"; ns ]')),
+        "cli/lib/kube/sol_cli_rollout_diagnosis.ml",
+        '[ "get"; "pods"; "-n"; ns; "-l"',
+        '[ "get"; "configmaps"; "-n"; ns; "-l"')),
     ("an ARN that never reaches the provider root", replace(
         "cli/lib/cloud/sol_cli_provider_capabilities.ml", '(Sol_cli_config.provider_field target "operator_role_arn")', "None")),
     ("an operator RoleBinding the substrate identity cannot bind", replace(

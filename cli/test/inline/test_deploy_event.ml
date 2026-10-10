@@ -6,7 +6,7 @@ let check_strings msg expected actual =
 ;;
 
 module E = Sol_cli_deploy_event
-module U = Sol_cli_observability_url
+module U = Sol_cli_observability_backend
 
 let sample =
   { E.workspace = "acme"

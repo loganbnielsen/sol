@@ -290,7 +290,7 @@
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 48 },
       "options": {
         "mode": "markdown",
-        "content": "This view is target-scoped: `sol open infra <env>/<provider>/<region>` opens it for one target and prints that target's provider console.\n\n- **Plain Grafana:** [dashboards](/dashboards)\n- **Plain Prometheus:** [Explore](/explore) - the Prometheus datasource every panel above reads\n- **Managed datastores:** a database Sol provisions for you (for example RDS) keeps its own CloudWatch-backed dashboard - `sol open dashboard resource/rds/<name>`\n\nThe sources do not converge into one store on purpose: Kubernetes and node facts come from Prometheus, Redpanda from its own public metrics, Postgres from the postgres exporter or the provider's metrics service, and a managed database from the provider. This view navigates to the right one rather than pretending they are one system."
+        "content": "This dashboard presents target infrastructure signals for the configured Grafana instance. Use your provider console for managed-service details.\n\n- **Plain Grafana:** [dashboards](/dashboards)\n- **Plain Prometheus:** [Explore](/explore) - the Prometheus datasource every panel above reads\n- **Managed datastores:** a database Sol provisions for you (for example RDS) keeps its own CloudWatch-backed dashboard.\n\nThe sources do not converge into one store on purpose: Kubernetes and node facts come from Prometheus, Redpanda from its own public metrics, Postgres from the postgres exporter or the provider's metrics service, and a managed database from the provider."
       }
     }
   ]

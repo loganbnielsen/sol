@@ -118,11 +118,10 @@ The boundary the contracts encode:
   a `sol-operator-diagnostics` `ClusterRole`, bound per application namespace at
   runtime exactly like deploy's. The grant is `get`/`list` on **only** the
   resources Sol's read-only commands read — pods, pods/log, services, events,
-  deployments, cronjobs, and namespaces — so `sol status` can explain an
-  unhealthy workload *including its events*. It deliberately has **no** mutating
-  verb, no `secrets`, and no `pods/exec` or `pods/portforward`: interactive
-  debugging is not diagnosis, and a future command that needs those must justify
-  them rather than inherit them.
+  deployments, cronjobs, and namespaces for Sol's read-only target and recovery
+  checks. It deliberately has **no** mutating verb, no `secrets`, and no
+  `pods/exec` or `pods/portforward`: interactive debugging remains an operator
+  action rather than a deployment identity capability.
 
 `sol deploy` fails closed unless the three ARNs it reads (provisioner, deploy,
 operator) are present and the public API endpoint is restricted to an
@@ -159,7 +158,7 @@ has no destination it can reach, it reconciles the environment and assembles the
 deploy identity's access for that run only — a temporary kubeconfig under
 `KUBECONFIG`, cleaned up at exit, never written into your home (DEC-058). The
 printed command and the `kube_context` line above remain what the *other*
-commands need: `sol status`, `sol logs` and `sol migrate` use the target's
+commands need: `sol migrate` uses the target's
 declared destination, and a provider that declares no deploy identity (GCP today)
 gets no ephemeral access at all — the deploy stops after provisioning and prints
 exactly this command and context for you to add.

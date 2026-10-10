@@ -164,7 +164,7 @@ labels (DEC-064). `@sol-fab/obs` reads them: the Loki stream and the OTLP trace
 resource carry `SOL_SERVICE` — the workload's bare Kubernetes name, not the
 `order-svc-ts`/`fulfillment-worker-ts` fallback — plus the other five, so an
 app-pushed log or trace is scoped exactly as the collector-promoted logs and
-metrics for the same pod, and `sol logs`' `{workspace,domain,service}` query
+metrics for the same pod, and Grafana/Loki's `{workspace,domain,service}` selector
 selects it. Run outside a manifest the variables are absent and the fallback
 service name is used.
 

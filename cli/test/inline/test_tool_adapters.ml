@@ -66,25 +66,6 @@ let test_kubectl_rollout_restart_argv () =
   check_str "action" "restart" (List.nth c.argv 2)
 ;;
 
-let test_kubectl_create_job_from_cronjob_argv () =
-  let c =
-    Sol_cli_process.cmd
-      [ "kubectl"
-      ; "create"
-      ; "job"
-      ; "invoice-fn-manual-1700000000"
-      ; "--from=cronjob/invoice-fn"
-      ; "-n"
-      ; "myapp-billing"
-      ]
-  in
-  check_str "subcommand" "create" (List.nth c.argv 1);
-  check_str "resource" "job" (List.nth c.argv 2);
-  check_str "job name" "invoice-fn-manual-1700000000" (List.nth c.argv 3);
-  check_str "--from=cronjob/" "--from=cronjob/invoice-fn" (List.nth c.argv 4);
-  check_str "namespace" "myapp-billing" (List.nth c.argv 6)
-;;
-
 let test_kubectl_patch_argv () =
   let c =
     Sol_cli_process.cmd
@@ -467,11 +448,6 @@ let%test "kubectl_argv: get argv" = test_kubectl_get_argv ()
 let%test "kubectl_argv: rollout status argv" = test_kubectl_rollout_status_argv ()
 let%test "kubectl_argv: rollout restart argv" = test_kubectl_rollout_restart_argv ()
 let%test "kubectl_argv: patch argv" = test_kubectl_patch_argv ()
-
-let%test "kubectl_argv: create job from cronjob argv" =
-  test_kubectl_create_job_from_cronjob_argv ()
-;;
-
 let%test "kubectl_failures: apply propagates error" = test_kubectl_apply_failure ()
 let%test "kubectl_failures: get propagates error" = test_kubectl_get_failure ()
 

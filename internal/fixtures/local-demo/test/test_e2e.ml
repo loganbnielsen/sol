@@ -154,7 +154,6 @@ type result =
   ; metrics_text : string
   ; worker_metrics_http : string option
   ; loki_resp : string
-  ; loki_cli_lines : (int, string) Stdlib.result
   ; db_rows : (int, string) Stdlib.result
   ; jobs_processed : int
   }
@@ -495,52 +494,6 @@ let run_golden_path () =
     try http_get env ~sw ~port:p ~path () with
     | e -> failwith ("Loki query failed: " ^ Printexc.to_string e)
   in
-  let loki_cli_lines =
-    let url = loki_url in
-    let emitted =
-      Sol_obs.of_env
-        ~sw
-        ~net:env#net
-        ~clock:env#clock
-        ~mono_clock:env#mono_clock
-        ~service:"auth-read"
-        ~context:[ "workspace", "sol-e2e"; "domain", "e2e" ]
-        ()
-    in
-    Sol_obs.log_info emitted "sol logs authenticated read e2e";
-    Sol_obs.flush emitted;
-    let credentials =
-      match
-        Sol_cli_loki.resolve_credentials
-          ~flag_username:None
-          ~flag_password:None
-          ~env_username:(Sys.getenv_opt "SOL_LOKI_USERNAME")
-          ~env_password:(Sys.getenv_opt "SOL_LOKI_PASSWORD")
-      with
-      | Ok (Some c) -> Some c
-      | Ok None -> Some Sol_cli_loki.{ username = "sol-e2e"; password = "sol-e2e" }
-      | Error msg -> failwith msg
-    in
-    let unit =
-      { Sol_cli_log_selector.workspace = "sol-e2e"
-      ; domain = "e2e"
-      ; service = "auth-read"
-      }
-    in
-    let deadline = Eio.Time.now env#clock +. 10.0 in
-    let rec count_until_visible () =
-      match
-        Sol_cli_loki.query ~base_url:url ~unit ?credentials ~limit:5 ~timeout_s:5.0 ()
-      with
-      | Ok (_ :: _ as lines) -> Ok (List.length lines)
-      | Ok [] when Eio.Time.now env#clock < deadline ->
-        Eio.Time.sleep env#clock 0.2;
-        count_until_visible ()
-      | Ok [] -> Ok 0
-      | Error err -> Error (Sol_cli_loki.fetch_error_to_string err)
-    in
-    count_until_visible ()
-  in
   let db_rows =
     match FulfilledOrders.list db_pool () with
     | Error e -> Error (Pg_error.to_string e)
@@ -550,7 +503,6 @@ let run_golden_path () =
   ; metrics_text
   ; worker_metrics_http
   ; loki_resp
-  ; loki_cli_lines
   ; db_rows
   ; jobs_processed = !jobs_processed
   }
@@ -1064,15 +1016,6 @@ let () =
             let r = golden_result () in
             if not (str_contains r.loki_resp {|"values":[[|})
             then Windtrap.fail "no log streams in Loki response")
-        ; Windtrap.test "sol logs Loki query path reads pushed logs" (fun () ->
-            let r = golden_result () in
-            match r.loki_cli_lines with
-            | Error msg -> Windtrap.failf "Sol_cli_loki.query could not read Loki: %s" msg
-            | Ok 0 ->
-              Windtrap.fail
-                "Sol_cli_loki.query succeeded but never saw the line emitted through \
-                 Sol_obs"
-            | Ok _ -> ())
         ]
     ; Windtrap.group
         "postgres"

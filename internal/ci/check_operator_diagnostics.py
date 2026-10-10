@@ -120,8 +120,6 @@ def main():
         fail("operator_role_arn is declared by the AWS root but never routed to it, so no access entry is created")
     readers = [
         root / "cli/lib/kube/sol_cli_rollout_diagnosis.ml",
-        root / "cli/bin/cmd_status.ml",
-        root / "cli/bin/cmd_logs.ml",
     ]
     reads = sorted({m for f in readers for m in re.findall(r'"get"; "([a-z/]+)"', f.read_text())})
     for resource in reads:
@@ -130,7 +128,7 @@ def main():
             fail(
                 f"the read-only diagnostic path reads '{resource}' ({api}), which the operator's grant does not cover"
             )
-    print("operator diagnostics: read-only grant, wired end to end, covers the diagnostic path")
+    print("deployment diagnostics: read-only grant, wired end to end, covers readiness diagnosis")
 
 
 main()

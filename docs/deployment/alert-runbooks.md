@@ -2,7 +2,7 @@
 
 One page per required maturity-A alert condition. Each alert carries its
 accountable `owner` and a link to the first-response runbook; the target
-declares both, and `sol alert test` proves the route is live. These runbooks are
+declares both, and deployment preflight validates that the declared route is complete. These runbooks are
 the *action*, not the proof — HARDEN-002 records the delivered-and-acknowledged
 synthetic alert and the game-day results.
 
@@ -39,8 +39,7 @@ minutes: the new release is not becoming ready. This is the signal DEC-026 §3's
 `workload-availability` work relies on.
 
 **First response.**
-1. `sol status` (once AUDIT-069 wires the drift check) or
-   `kubectl -n <workspace>-<domain> describe deploy <service>` — read the
+1. `kubectl -n <workspace>-<domain> describe deploy <service>` — read the
    `Progressing`/`Available` conditions.
 2. `kubectl -n <namespace> get events --sort-by=.lastTimestamp | tail`.
 3. `sol deployments` — confirm which release/attempt is in flight.
@@ -88,7 +87,7 @@ failing; the `SolPostgresUnavailable` rule is `critical`.
    completed and consumers resumed within the §5 target (60 seconds).
 2. More than one broker down is an explicit exclusion — escalate and treat as
    incident, not profile behaviour.
-3. For lag: check consumer health (`sol logs`) and whether a rollout is
+3. For lag: check consumer health using the team's Loki/Grafana tooling and whether a rollout is
    blocking consumers; scale only if the declared replica bounds allow.
 4. Never disable `SOL_KAFKA_DURABILITY` to "work around" lag: that trades
    durability for throughput outside the profile's contract.
