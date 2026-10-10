@@ -10,6 +10,10 @@ type aws_outputs =
   ; grafana_irsa_role_arn : string option
   ; managed_resource_dashboards : Yojson.Safe.t
   ; database_egress_cidrs : string list
+  ; (* The database's administrative connection, as the provisioning configuration
+       reports it. Null when no database was created. No code read this before; the
+       database setup step is its first consumer. *)
+    postgres_url : string option
   }
 
 let aws_outputs_of_json text =
@@ -44,6 +48,7 @@ let aws_outputs_of_json text =
            items)
     | _ -> Error "AWS Terraform output \"database_egress_cidrs\" is not a list of strings"
   in
+  let* postgres_url = optional_string "postgres_url" in
   let managed_resource_dashboards = value "managed_resource_dashboards" in
   match managed_resource_dashboards with
   | `Assoc _ ->
@@ -59,6 +64,7 @@ let aws_outputs_of_json text =
       ; grafana_irsa_role_arn
       ; managed_resource_dashboards
       ; database_egress_cidrs
+      ; postgres_url
       }
   | _ -> Error "AWS Terraform output \"managed_resource_dashboards\" is not an object"
 ;;

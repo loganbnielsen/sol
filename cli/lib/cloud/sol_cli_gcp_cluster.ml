@@ -66,6 +66,8 @@ type gcp_outputs =
   ; cert_manager_workload_identity_sa_email : string option
   ; provisioner_service_account : string
   ; database_egress_cidrs : string list
+  ; (* See the AWS counterpart: null when no database was created. *)
+    postgres_url : string option
   }
 
 let gcp_outputs_of_json text =
@@ -107,6 +109,7 @@ let gcp_outputs_of_json text =
     | _ -> Error "GCP Terraform output \"database_egress_cidrs\" is not a list of strings"
   in
   let* provisioner_service_account = string "provisioner_service_account" in
+  let* postgres_url = optional_string "postgres_url" in
   Ok
     { cluster_name
     ; project_id
@@ -119,6 +122,7 @@ let gcp_outputs_of_json text =
     ; cert_manager_workload_identity_sa_email
     ; provisioner_service_account
     ; database_egress_cidrs
+    ; postgres_url
     }
 ;;
 
