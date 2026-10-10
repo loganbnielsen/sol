@@ -72,6 +72,41 @@ let valid_outputs () =
 
 let parse json = Sol_cli_aws_cluster.aws_outputs_of_json (Yojson.Safe.to_string json)
 
+(* The provisioning output the database setup step consumes. No code read this output
+   before 2c, so this is the first assertion that it is read at all, and that a target
+   which provisions no database reports none rather than an empty string. *)
+let test_postgres_url_output () =
+  let with_url value =
+    match valid_outputs () with
+    | `Assoc fields -> `Assoc (fields @ [ output "postgres_url" ~value ])
+    | _ -> assert false
+  in
+  (match
+     parse (with_url (`String "postgresql://postgres:master@db.internal:5432/app"))
+   with
+   | Error message -> Windtrap.fail message
+   | Ok outputs ->
+     Windtrap.equal
+       (Windtrap.option Windtrap.string)
+       ~msg:"the provisioning connection is read"
+       (Some "postgresql://postgres:master@db.internal:5432/app")
+       outputs.postgres_url);
+  match parse (with_url `Null) with
+  | Error message -> Windtrap.fail message
+  | Ok outputs ->
+    Windtrap.equal
+      (Windtrap.option Windtrap.string)
+      ~msg:"a target that provisions no database reports none"
+      None
+      outputs.postgres_url
+;;
+
+let%test
+    "postgres_url: the provisioning connection is read, and absence is not a blank string"
+  =
+  test_postgres_url_output ()
+;;
+
 let test_outputs () =
   (match parse (valid_outputs ()) with
    | Ok _ -> ()
