@@ -178,24 +178,16 @@ let secret_name_for_key ~name ~secret_sources key =
 let secret_doc
       ?(base_secrets = default_secrets)
       ?(extra_secrets = [])
-      ?(redact = false)
       ?(labels = [])
       ~ns
       ~name
       ()
   =
+  (* Sol writes the unit Secret with `sol secret set`; it is not part of a rendered
+     bundle, so there is no redacted/placeholder emission path. A caller supplies exactly
+     the values it means to write. *)
   let secrets = base_secrets @ extra_secrets in
-  let secrets = if redact then List.map (fun (k, _) -> k, "") secrets else secrets in
-  let comments =
-    if redact
-    then
-      [ "Populate these values before applying."
-      ; "Use `sol secret set <TARGET> <domain>/<unit>/<KEY>` or your secrets manager."
-      ]
-    else []
-  in
   resource
-    ~comments
     ~api_version:"v1"
     ~kind:"Secret"
     [ "metadata", metadata_with_labels ~labels ~ns ~name

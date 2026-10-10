@@ -116,6 +116,6 @@ your-secret-tool get production-postgres-url \
 This writes only the target's `sol-secrets` objects used by internal Jobs. It
 does not populate any application unit Secret.
 
-The target explicitly maps every required key to `sol` or `external`. M1
-refuses deployment when a key is externally owned because ESO delivery is not
-implemented yet.
+The target explicitly maps every required key to `sol` or `external`. An external
+key is delivered by a namespaced ESO `ExternalSecret`; the deploy waits for ESO to
+report it synced before applying the workload, and fails closed if it cannot.
