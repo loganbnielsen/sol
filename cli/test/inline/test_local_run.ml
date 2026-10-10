@@ -97,6 +97,92 @@ let test_ocaml_unit_builds_with_dune_and_runs_the_binary () =
        Windtrap.fail (Printf.sprintf "expected one launch, got %d" (List.length launches)))
 ;;
 
+let test_local_secret_file_parses_without_shell_evaluation () =
+  match
+    Sol_cli_local_secret_input.parse
+      "# comment\nPAYMENT_API_KEY=abc=123\nQUOTED=\" a value # kept \"\n"
+  with
+  | Error message -> Windtrap.fail message
+  | Ok values ->
+    check_strings
+      "values preserve equals and quoted content"
+      [ "PAYMENT_API_KEY"; "abc=123"; "QUOTED"; " a value # kept " ]
+      (List.concat_map (fun (key, value) -> [ key; value ]) values)
+;;
+
+let test_local_secret_file_rejects_duplicate_keys_without_values () =
+  match
+    Sol_cli_local_secret_input.parse
+      "PAYMENT_API_KEY=never-print-this\nPAYMENT_API_KEY=second\n"
+  with
+  | Ok _ -> Windtrap.fail "duplicate secret key was accepted"
+  | Error message ->
+    check_bool
+      "diagnostic names key"
+      true
+      (Sol_cli_string.contains ~needle:"PAYMENT_API_KEY" message);
+    check_bool
+      "diagnostic redacts value"
+      false
+      (Sol_cli_string.contains ~needle:"never-print-this" message)
+;;
+
+let test_local_run_projects_only_declared_secret_keys () =
+  with_workspace
+    [ "sol.yml", sol_yml ~services:"services:\n  charge_svc:\n    language: ocaml\n"
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", "[infra.env]\nsecrets = [\"PAYMENT_API_KEY\"]\n"
+    ; "app/payments/charge_svc/bin/dune", "(executable (name main))\n"
+    ]
+  @@ fun root ->
+  let facts = facts_of root in
+  match
+    Sol_cli_local_run.plan
+      ~secret_values:[ "PAYMENT_API_KEY", "sensitive-value"; "UNDECLARED", "do-not-pass" ]
+      ~root
+      ~facts
+      (services_of facts)
+  with
+  | Error errors -> Windtrap.fail (String.concat "; " (List.map snd errors))
+  | Ok plan ->
+    (match plan.launches with
+     | [ recipe ] ->
+       check_string
+         "declared secret is present in the local service"
+         "sensitive-value"
+         (Option.value ~default:"" (List.assoc_opt "PAYMENT_API_KEY" recipe.env));
+       check_bool
+         "undeclared value is not passed to service"
+         false
+         (List.mem_assoc "UNDECLARED" recipe.env);
+       check_bool
+         "secret is marked for output redaction"
+         true
+         (List.mem "sensitive-value" plan.redact)
+     | _ -> Windtrap.fail "expected one local service")
+;;
+
+let test_local_run_requires_declared_secret_value () =
+  with_workspace
+    [ "sol.yml", sol_yml ~services:"services:\n  charge_svc:\n    language: ocaml\n"
+    ; "app/payments/charge_svc/Dockerfile", dockerfile
+    ; "app/payments/charge_svc/sol.toml", "[infra.env]\nsecrets = [\"PAYMENT_API_KEY\"]\n"
+    ; "app/payments/charge_svc/bin/dune", "(executable (name main))\n"
+    ]
+  @@ fun root ->
+  let facts = facts_of root in
+  match Sol_cli_local_run.plan ~root ~facts (services_of facts) with
+  | Ok _ -> Windtrap.fail "missing declared secret was accepted"
+  | Error errors ->
+    (match errors with
+     | (_, message) :: _ ->
+       check_bool
+         "names missing key"
+         true
+         (Sol_cli_string.contains ~needle:"PAYMENT_API_KEY" message)
+     | [] -> Windtrap.fail "expected missing secret diagnostic")
+;;
+
 let typescript_unit =
   [ ( "app/demo_ts/package.json"
     , {|{"name": "demo-ts", "private": true, "workspaces": ["order_svc", "fulfillment_worker"]}|}

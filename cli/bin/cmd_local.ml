@@ -2,12 +2,12 @@ open Cmdliner
 open Sol_cli_manifest
 open Result.Syntax
 
-let prefix_lines_thread fd label =
+let prefix_lines_thread fd label redact =
   let ic = Unix.in_channel_of_descr fd in
   (try
      while true do
        let line = input_line ic in
-       Printf.printf "[%s] %s\n%!" label line
+       Printf.printf "[%s] %s\n%!" label (Sol_cli_process.apply_redactions redact line)
      done
    with
    | End_of_file | Sys_error _ -> ());
@@ -21,6 +21,10 @@ let resolve_run workspace_dir scope =
   if not (String.equal (Sys.getcwd ()) facts.Sol_cli_workspace_model.root)
   then Unix.chdir facts.Sol_cli_workspace_model.root;
   let inventory = Sol_cli_workspace_model.services facts in
+  let* secret_values =
+    Sol_cli_local_secret_input.load ~root:facts.Sol_cli_workspace_model.root
+    |> Sol_cli_exit.of_msg
+  in
   let* { requested_scope; services; _ } =
     Sol_cli_workload_selection.resolve_nonempty
       ~none:
@@ -31,7 +35,11 @@ let resolve_run workspace_dir scope =
     |> Sol_cli_exit.of_msg
   in
   let* plan =
-    Sol_cli_local_run.plan ~root:facts.Sol_cli_workspace_model.root ~facts services
+    Sol_cli_local_run.plan
+      ~secret_values
+      ~root:facts.Sol_cli_workspace_model.root
+      ~facts
+      services
     |> function
     | Ok plan -> Ok plan
     | Error errors ->
@@ -95,7 +103,11 @@ let launch_services (plan : Sol_cli_local_run.plan) =
   Sol_cli_local_run.launch_all
     ~output:(fun (recipe : Sol_cli_local_run.recipe) ->
       let pipe_read, pipe_write = Unix.pipe ~cloexec:true () in
-      let _t = Thread.create (fun () -> prefix_lines_thread pipe_read recipe.label) () in
+      let _t =
+        Thread.create
+          (fun () -> prefix_lines_thread pipe_read recipe.label plan.redact)
+          ()
+      in
       pipe_write)
     plan.launches
   |> Result.map_error Sol_cli_local_run.child_failure_to_string
@@ -179,7 +191,8 @@ let run_subcmd =
   Cmd.v
     (Cmd.info
        "run"
-       ~doc:"Start all workspace services locally using dune exec with dev env vars")
+       ~doc:
+         "Run workspace services as native processes, with local secrets from .env.local.")
     Term.(
       const Sol_cli_exit.exit_on $ (const dev_run $ run_workspace_arg $ run_scope_arg))
 ;;

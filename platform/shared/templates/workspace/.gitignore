@@ -1,2 +1,3 @@
 _build/
 sol/environments.local.yml
+.env.local
