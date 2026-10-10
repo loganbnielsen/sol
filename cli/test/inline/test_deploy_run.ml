@@ -1168,6 +1168,20 @@ let test_deploy_prunes_an_external_secret_the_unit_no_longer_declares () =
     let declared =
       plan [ spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc ]
     in
+    (* The superseded release still declared an external key, so its record attached the
+       ExternalSecret's UID to the workload. The new plan declares the workload without
+       one, so the ExternalSecret is an orphan while the workload is not surplus. *)
+    let with_external_key =
+      plan
+        [ { (spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc) with
+            secret_sources =
+              [ ( "PAYMENT_KEY"
+                , Sol_cli_manifest.External
+                    { store = "payments-vault"; key = "payments/key" } )
+              ]
+          }
+        ]
+    in
     let owned =
       [ recorded_charge_svc "uid-recorded"
       ; { Sol_cli_release_id.resource = "externalsecret"
@@ -1177,7 +1191,9 @@ let test_deploy_prunes_an_external_secret_the_unit_no_longer_declares () =
         }
       ]
     in
-    let current, record = release_configmap_files ~dir ~evidence_plan:declared ~owned in
+    let current, record =
+      release_configmap_files ~dir ~evidence_plan:with_external_key ~owned
+    in
     let deployments = Filename.concat dir "deployments.json" in
     write_file
       deployments
@@ -1328,4 +1344,50 @@ let%test "substrate_prerequisite: an empty plan establishes nothing" =
       match substrate_prerequisite ctx ~live:true [] with
       | Ok () -> Windtrap.equal Windtrap.string ~msg:"no kubectl call" "" (calls ())
       | Error _ -> Windtrap.fail "a plan with no namespaces has nothing to establish"))
+;;
+
+(* The invariant behind the ExternalSecret fix: every entry captured into [owned] must be
+   attached to some workload in the release record, or it is silently dropped before the
+   record is written and any prune that reads it is inert. *)
+let test_captured_evidence_is_recorded () =
+  let plan =
+    plan
+      [ { (spec ~domain:"payments" ~name:"charge_svc" ~k8s:"charge-svc" Svc) with
+          secret_sources =
+            [ ( "PAYMENT_KEY"
+              , Sol_cli_manifest.External
+                  { store = "payments-vault"; key = "payments/key" } )
+            ]
+        }
+      ]
+  in
+  let owned =
+    [ recorded_charge_svc "uid-recorded"
+    ; { Sol_cli_release_id.resource = "externalsecret"
+      ; namespace = "myapp-payments"
+      ; name = "charge-svc-external-secrets"
+      ; uid = "uid-2"
+      }
+    ]
+  in
+  let release =
+    Sol_cli_release.of_plan_with_boundary
+      ~owned
+      ~apply_mode:Sol_cli_release.Direct
+      ~retained:[]
+      plan
+  in
+  let recorded =
+    release.workloads
+    |> List.concat_map (fun (w : Sol_cli_release_id.recorded_workload) -> w.owned)
+  in
+  Windtrap.equal
+    Windtrap.int
+    ~msg:"every captured evidence entry is attached to a workload"
+    (List.length owned)
+    (List.length recorded)
+;;
+
+let%test "removal: a captured evidence entry is recorded with its workload" =
+  test_captured_evidence_is_recorded ()
 ;;

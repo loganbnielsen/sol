@@ -238,6 +238,28 @@ let resource_of_spec (spec : service_spec) : string =
      | None -> "deployment")
 ;;
 
+(* The ExternalSecret a unit's spec projects to, when it declares at least one external
+   key: [(namespace, name)]. This is the one projection of that identity: evidence
+   capture records its UID, the release record attaches that evidence to its workload,
+   and a prune compares the declared set against it. Two independent derivations would
+   drift, and a capture that no attachment matches is dropped silently. *)
+let external_secret_of_spec (spec : service_spec) : (string * string) option =
+  let has_external =
+    List.exists
+      (fun (_, source) ->
+         match source with
+         | Sol_cli_manifest.Sol_managed -> false
+         | External _ -> true)
+      spec.secret_sources
+  in
+  if has_external
+  then
+    Some
+      ( namespace_to_string spec.namespace
+      , Sol_cli_manifest.external_secret_name (k8s_name_to_string spec.k8s_name) )
+  else None
+;;
+
 let release_workload_of_spec (spec : service_spec) : Sol_cli_release_id.workload =
   { Sol_cli_release_id.domain = spec.domain
   ; name = spec.source_name
