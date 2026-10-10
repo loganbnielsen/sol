@@ -598,30 +598,28 @@ let verify_external_secret_ready ~ctx (spec : Sol_cli_deployment_plan.service_sp
                external_name
                (Option.value state ~default:"unknown")
                (Option.value reason ~default:"unknown"))
-        else (
-          match generation, observed with
-          | Some generation, Some observed when String.equal generation observed -> Ok ()
-          | Some generation, Some observed ->
-            Error
-              (Printf.sprintf
-                 "ESO condition for %s/%s is stale for metadata generation %s (observed \
-                  %s)"
-                 namespace
-                 external_name
-                 generation
-                 observed)
-          | _ ->
-            (* Fail closed rather than accept a Ready condition we cannot tie to the
-                live spec: External Secrets Operator >= 0.16 supplies both
-                metadata.generation and the condition's observedGeneration. *)
-            Error
-              (Printf.sprintf
-                 "cannot verify ESO sync for %s/%s: the deploy gate requires \
-                  metadata.generation and the Ready condition's observedGeneration \
-                  (External Secrets Operator >= 0.16 supplies both); refusing to apply a \
-                  workload against an unverified external Secret"
-                 namespace
-                 external_name))
+        else if
+          (* External Secrets Operator's ExternalSecretStatusCondition carries only
+             type/status/reason/message/lastTransitionTime — it does not publish an
+             observedGeneration (verified against the upstream API through v0.20 and
+             the current v1 spec). A Ready condition therefore cannot be tied to the
+             live metadata.generation, and requiring that field would fail every
+             deploy. Compare the generations only when ESO does supply one, so the
+             check is dormant today and engages if a future ESO adds the field. *)
+          List.mem_assoc "observedGeneration" condition
+          && Option.fold
+               ~none:false
+               ~some:(fun generation -> observed <> Some generation)
+               generation
+        then
+          Error
+            (Printf.sprintf
+               "ESO condition for %s/%s is stale for metadata generation %s (observed %s)"
+               namespace
+               external_name
+               (Option.value generation ~default:"unknown")
+               (Option.value observed ~default:"unknown"))
+        else Ok ()
     in
     let* materialized =
       get_named_secret_json

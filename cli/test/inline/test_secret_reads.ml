@@ -51,12 +51,8 @@ if [ "$verb" = "get" ]; then
   fi
   case "$kind" in
     externalsecret)
-      if [ "$mode" = "eso-no-observed-generation" ]; then
-        printf '{"metadata":{"generation":2},"status":{"conditions":[{"type":"Ready","status":"True","reason":"SecretSynced"}]}}\n'
-        exit 0
-      fi
-      if [ "$mode" = "eso-no-metadata-generation" ]; then
-        printf '{"metadata":{},"status":{"conditions":[{"type":"Ready","status":"True","reason":"SecretSynced","observedGeneration":2}]}}\n'
+      if [ "$mode" = "eso-ready" ]; then
+        printf '{"metadata":{"generation":2},"status":{"refreshTime":"2026-10-10T12:00:00Z","conditions":[{"type":"Ready","status":"True","reason":"SecretSynced"}]}}\n'
         exit 0
       fi
       if [ "$mode" = "phased-eso-ready" ] || [ "$mode" = "phased-eso-not-synced" ]; then
@@ -66,7 +62,7 @@ if [ "$verb" = "get" ]; then
         printf '{"metadata":{"name":"charge-svc-external-secrets","namespace":"payments","uid":"es-uid","generation":2,"labels":{"app.kubernetes.io/managed-by":"sol"}},"spec":{"target":{"name":"charge-svc-external-secrets"}},"status":{"refreshTime":"2026-10-10T12:00:00Z","conditions":[{"type":"Ready","status":"%%s","reason":"%%s","observedGeneration":2}]}}\n' "$state" "$reason"
         exit 0
       fi
-      if [ "$mode" = "eso-ready" ] || [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
+      if [ "$mode" = "eso-stale" ] || [ "$mode" = "eso-not-synced" ] || [ "$mode" = "eso-wrong-keys" ]; then
         observed=2
         reason=SecretSynced
         state=True
@@ -629,25 +625,20 @@ let test_phased_apply_blocks_the_workload_when_eso_is_not_synced () =
         (Sol_cli_string.contains ~needle:"kind: Deployment" (manifests ())))
 ;;
 
-(* The deploy gate must not accept a Ready condition it cannot tie to the live spec:
-   a missing generation field is an unverifiable sync, not a satisfied one. *)
-let test_external_secret_readiness_rejects_missing_generation mode =
-  with_fake_kubectl ~mode (fun ~calls:_ ~manifests:_ ->
+(* ESO's ExternalSecretStatusCondition has no observedGeneration, so a real
+   Ready=True/SecretSynced condition must be accepted: requiring that field would fail
+   every deploy with an external key against the real controller. *)
+let test_external_secret_readiness_accepts_eso_without_observed_generation () =
+  with_fake_kubectl ~mode:"eso-ready" (fun ~calls:_ ~manifests:_ ->
     match
       Sol_cli_secret.verify_external_secret_ready ~ctx (external_workload_spec ())
     with
-    | Ok () -> Windtrap.failf "ESO state %s must fail closed" mode
+    | Ok () -> ()
     | Error message ->
-      Windtrap.equal
-        Windtrap.bool
-        ~msg:"names the generation field it needs"
-        true
-        (Sol_cli_string.contains ~needle:"observedGeneration" message);
-      Windtrap.equal
-        Windtrap.bool
-        ~msg:"names the ESO version assumption"
-        true
-        (Sol_cli_string.contains ~needle:"0.16" message))
+      Windtrap.failf
+        "a Ready/SecretSynced condition without observedGeneration (the real ESO schema) \
+         must be accepted: %s"
+        message)
 ;;
 
 let test_local_development_spec_forces_sol_managed () =
@@ -734,12 +725,10 @@ let%test "rollout: an Argo Rollout is waited on" =
   test_wait_for_workload_ready_targets_a_rollout ()
 ;;
 
-let%test "external Secret readiness fails closed without observedGeneration" =
-  test_external_secret_readiness_rejects_missing_generation "eso-no-observed-generation"
-;;
-
-let%test "external Secret readiness fails closed without metadata.generation" =
-  test_external_secret_readiness_rejects_missing_generation "eso-no-metadata-generation"
+let%test
+    "external Secret readiness accepts a real ESO condition without observedGeneration"
+  =
+  test_external_secret_readiness_accepts_eso_without_observed_generation ()
 ;;
 
 let%test "local development forces every key to Sol-managed" =
