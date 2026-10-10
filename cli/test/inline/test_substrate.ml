@@ -165,14 +165,21 @@ let test_namespace_is_created_not_applied () =
     let workload_yaml =
       "---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: checkout-svc\n"
     in
-    Sol_cli_manifest.apply
-      ~ctx:Sol_cli_kube_destination.local_context
-      (ns_yaml, workload_yaml)
-      ~dry_run:false
-    |> Result.iter_error (fun msg ->
+    let ctx = Sol_cli_kube_destination.local_context in
+    let bundle : Sol_cli_manifest.bundle =
+      { namespace_yaml = ns_yaml; prerequisites_yaml = ""; workload_yaml }
+    in
+    let fail msg =
       Windtrap.failf
         "the namespace was applied instead of created; live error was: %s"
-        msg);
+        msg
+    in
+    (match Sol_cli_manifest.apply_bundle_namespace ~ctx bundle with
+     | Error msg -> fail msg
+     | Ok () ->
+       (match Sol_cli_manifest.apply_bundle_workload ~ctx bundle with
+        | Error msg -> fail msg
+        | Ok () -> ()));
     let calls = String.split_on_char '\n' (read_file log) in
     let call verb kind =
       List.exists (fun line -> String.equal (String.trim line) (verb ^ " " ^ kind)) calls

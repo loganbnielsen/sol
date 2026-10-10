@@ -20,15 +20,17 @@ let apply_specs ~ensure_held ~ctx ~local ~release specs =
           message)
     in
     let spec = if local then Sol_cli_executor.local_development_spec spec else spec in
-    let* () = Sol_cli_secret.verify_workload_secret ~ctx spec in
-    let* yaml =
+    let* bundle =
       Sol_cli_deployment_render.render_spec
         ~workspace:release.Sol_cli_release.workspace
         ?env:release.environment
         ~release_id:release_id_t
         spec
     in
-    let* () = Sol_cli_manifest.apply ~ctx yaml ~dry_run:false in
+    let* () = Sol_cli_executor.apply_workload_phased ~ctx ~spec ~bundle in
+    (* The boundary lease TTL is 300s; heartbeat before the bounded rollout wait. *)
+    let* () = ensure_held () in
+    let* () = Sol_cli_executor.wait_for_workload_ready ~ctx ~spec in
     Printf.printf
       "  applied %s/%s\n%!"
       (Sol_cli_deployment_plan.namespace_to_string spec.namespace)

@@ -702,7 +702,7 @@ let test_scoped_deploy_records_a_complete_boundary () =
              ~release_id:scoped.release_id
              spec
          with
-         | Ok (_, yaml) -> yaml
+         | Ok bundle -> bundle.prerequisites_yaml ^ bundle.workload_yaml
          | Error msg -> Windtrap.fail msg)
       | _ -> Windtrap.fail "expected one scoped service"
     in

@@ -651,7 +651,7 @@ let render_ok spec =
       ~release_id:release_id_of_test
       spec
   with
-  | Ok (ns_yaml, workload_yaml) -> ns_yaml, workload_yaml
+  | Ok bundle -> bundle.namespace_yaml, bundle.prerequisites_yaml ^ bundle.workload_yaml
   | Error e -> Windtrap.fail ("render_spec failed: " ^ e)
 ;;
 

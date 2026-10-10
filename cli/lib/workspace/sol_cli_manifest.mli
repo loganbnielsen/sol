@@ -244,15 +244,26 @@ val create_idempotent
   -> file:string
   -> (unit, Sol_cli_process.error) result
 
-val apply
+type bundle =
+  { namespace_yaml : string
+  ; prerequisites_yaml : string
+  ; workload_yaml : string
+  }
+
+val apply_bundle_namespace
   :  ctx:Sol_cli_kube_destination.context
-  -> string * string
-  -> dry_run:bool
+  -> bundle
   -> (unit, string) result
 
-val emit_to_dir
-  :  string
-  -> string * string
-  -> ns:string
-  -> name:string
-  -> (string, string) result
+val apply_bundle_prerequisites
+  :  ctx:Sol_cli_kube_destination.context
+  -> bundle
+  -> (unit, string) result
+
+val apply_bundle_workload
+  :  ctx:Sol_cli_kube_destination.context
+  -> bundle
+  -> (unit, string) result
+
+val print_bundle : bundle -> unit
+val emit_to_dir : string -> bundle -> ns:string -> name:string -> (string, string) result

@@ -217,7 +217,7 @@ let test_local_plan_renders_readyz () =
                { workspace = "ws"; environment = None; workloads = []; contract = [] })
           charge_svc
       with
-      | Ok (_, workload) -> workload
+      | Ok bundle -> bundle.prerequisites_yaml ^ bundle.workload_yaml
       | Error e -> Windtrap.fail ("render_spec: " ^ e)
     in
     check_bool
