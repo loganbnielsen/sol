@@ -100,6 +100,8 @@ sol local run
 
 `sol local run` discovers every service in `app/<domain>/<name>/` that has a `Dockerfile` and runs each one as a **native process** — no Docker image rebuild required. The workload's declared language (above) picks how it is built and launched: an OCaml unit is built with a single `dune build` across all of them and its compiled binary is spawned; a TypeScript unit is built with `npm run build` in its npm project and its built entry is run with `node`. Sol launches each service with its literal argv and working directory — paths with spaces or shell metacharacters need no quoting — and owns each process, so Ctrl-C or SIGTERM stops every service Sol started and leaves no descendants. If one service exits nonzero or is signalled, Sol stops the rest and exits nonzero rather than reporting a successful run. Each service's stdout and stderr is prefixed with `[domain/name]`, so you can follow several in one terminal.
 
+For local-only credentials, put `KEY=value` lines in the workspace's ignored `.env.local` file. Sol passes each value only to services that declare that key under `[infra.env].secrets`; values are not shell-expanded, passed to build commands, or printed when they appear in service output. The scaffolded `.gitignore` and `.dockerignore` both exclude `.env.local`; add the same entries to older workspaces before creating the file. A declared key missing from both `.env.local` and the current shell environment stops `sol local run` before it builds or starts services.
+
 The environment variables your services expect are inherited directly from the shell (set by `sol local infra up`'s port-forwards):
 
 | Variable | Value (set by `sol local infra up`) |

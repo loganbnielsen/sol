@@ -110,7 +110,7 @@ No positional: the command acts on the workspace, and a target or scope is a nar
 | `sol local migrate` | — | `--dir=DIR`, `--dry-run`, `--table=TABLE` | documented | Apply migrations against the local cluster's |
 | `sol local releases` | — | — | documented | List the release records Sol's local cluster |
 | `sol local rollback` | RELEASE_ID | — | documented | Restore a recorded release boundary on the local |
-| `sol local run` | — | `-C`, `--scope=DOMAIN[/UNIT]` | documented | Start all workspace services locally using dune exec |
+| `sol local run` | — | `-C`, `--scope=DOMAIN[/UNIT]` | documented | Run workspace services as native processes, with local |
 | `sol local secret delete` | KEY | `--domain=DOMAIN` | documented | Delete a secret key |
 | `sol local secret list` | — | `--domain=DOMAIN` | documented | List secret keys without values |
 | `sol local secret set` | KEY | `--domain=DOMAIN`, `--value=VALUE` | documented | Create or update a secret key |

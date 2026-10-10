@@ -17,6 +17,7 @@ type recipe =
 type plan =
   { builds : command list
   ; launches : recipe list
+  ; redact : string list
   }
 
 let label (svc : Sol_cli_manifest.service) = svc.domain ^ "/" ^ svc.name
@@ -201,7 +202,51 @@ let dev_identity ~root (svc : Sol_cli_manifest.service) =
     ()
 ;;
 
-let recipe_of_ocaml ~root (svc : Sol_cli_manifest.service) =
+let set_env key value env =
+  let rec replace = function
+    | [] -> [ key, value ]
+    | (candidate, _) :: rest when String.equal candidate key -> (key, value) :: rest
+    | entry :: rest -> entry :: replace rest
+  in
+  replace env
+;;
+
+let secret_keys_of_workload workload =
+  match workload.Sol_cli_workspace_model.config with
+  | Ok config -> Ok config.Sol_cli_toml.secret_keys
+  | Error error -> Error (Sol_cli_toml.parse_error_to_string error)
+;;
+
+let local_secret_env ~secret_values ~secret_keys =
+  let find key =
+    match List.assoc_opt key secret_values with
+    | Some value -> Some value
+    | None -> Sys.getenv_opt key
+  in
+  let missing =
+    secret_keys
+    |> List.filter (fun key ->
+      match find key with
+      | None | Some "" -> true
+      | Some _ -> false)
+    |> List.sort_uniq String.compare
+  in
+  match missing with
+  | _ :: _ ->
+    Error
+      ("missing local secret value(s): "
+       ^ String.concat ", " missing
+       ^ ". Add them to .env.local.")
+  | [] ->
+    let values =
+      "POSTGRES_URL" :: "SOL_API_KEY" :: secret_keys
+      |> List.sort_uniq String.compare
+      |> List.filter_map (fun key -> Option.map (fun value -> key, value) (find key))
+    in
+    Ok values
+;;
+
+let recipe_of_ocaml ~root ~secret_env (svc : Sol_cli_manifest.service) =
   let dir = svc.Sol_cli_manifest.dir in
   Ok
     { label = label svc
@@ -209,11 +254,13 @@ let recipe_of_ocaml ~root (svc : Sol_cli_manifest.service) =
     ; build = None
     ; launch = { argv = [ "_build/default/" ^ dir ^ "/bin/main.exe" ]; cwd = "" }
     ; artifact = dir ^ "/bin/main.exe"
-    ; env = dev_env @ dev_identity ~root svc
+    ; env =
+        List.fold_left (fun env (key, value) -> set_env key value env) dev_env secret_env
+        @ dev_identity ~root svc
     }
 ;;
 
-let recipe_of_typescript ~root (svc : Sol_cli_manifest.service) =
+let recipe_of_typescript ~root ~secret_env (svc : Sol_cli_manifest.service) =
   let unit_dir = svc.Sol_cli_manifest.dir in
   let package_path = Filename.concat (join root unit_dir) "package.json" in
   let* package =
@@ -268,14 +315,16 @@ let recipe_of_typescript ~root (svc : Sol_cli_manifest.service) =
         ; cwd = npm_root
         }
     ; artifact = Filename.concat unit_dir entry
-    ; env = dev_env @ dev_identity ~root svc
+    ; env =
+        List.fold_left (fun env (key, value) -> set_env key value env) dev_env secret_env
+        @ dev_identity ~root svc
     }
 ;;
 
-let recipe ~root (svc : Sol_cli_manifest.service) language =
+let recipe ~root ~secret_env (svc : Sol_cli_manifest.service) language =
   match language with
-  | Sol_cli_compat.Ocaml -> recipe_of_ocaml ~root svc
-  | Sol_cli_compat.Typescript -> recipe_of_typescript ~root svc
+  | Sol_cli_compat.Ocaml -> recipe_of_ocaml ~root ~secret_env svc
+  | Sol_cli_compat.Typescript -> recipe_of_typescript ~root ~secret_env svc
 ;;
 
 let workload_of (facts : Sol_cli_workspace_model.t) (svc : Sol_cli_manifest.service) =
@@ -286,25 +335,31 @@ let workload_of (facts : Sol_cli_workspace_model.t) (svc : Sol_cli_manifest.serv
     facts.workloads
 ;;
 
-let plan ~root ~facts services =
+let plan ?(secret_values = []) ~root ~facts services =
   let resolved =
     services
     |> List.map (fun svc ->
       match workload_of facts svc with
       | None -> Error (label svc, "is not part of this workspace")
       | Some workload ->
-        (match workload.Sol_cli_workspace_model.language with
-         | Some language ->
-           (match recipe ~root svc language with
-            | Ok recipe -> Ok recipe
-            | Error message -> Error (label svc, message))
-         | None ->
-           Error
-             ( label svc
-             , Printf.sprintf
-                 "declares no language; add `language: ocaml` (or typescript) under \
-                  services.%s in sol.yml"
-                 svc.name )))
+        (match secret_keys_of_workload workload with
+         | Error message -> Error (label svc, message)
+         | Ok secret_keys ->
+           (match local_secret_env ~secret_values ~secret_keys with
+            | Error message -> Error (label svc, message)
+            | Ok secret_env ->
+              (match workload.Sol_cli_workspace_model.language with
+               | Some language ->
+                 (match recipe ~root ~secret_env svc language with
+                  | Ok recipe -> Ok recipe
+                  | Error message -> Error (label svc, message))
+               | None ->
+                 Error
+                   ( label svc
+                   , Printf.sprintf
+                       "declares no language; add `language: ocaml` (or typescript) \
+                        under services.%s in sol.yml"
+                       svc.name )))))
   in
   match
     List.filter_map
@@ -335,7 +390,26 @@ let plan ~root ~facts services =
       | targets -> [ { argv = "dune" :: "build" :: targets; cwd = "" } ]
     in
     let unit_builds = List.filter_map (fun r -> r.build) recipes in
-    Ok { builds = ocaml_build @ unit_builds; launches = recipes }
+    let redact =
+      recipes
+      |> List.concat_map (fun recipe ->
+        recipe.env
+        |> List.filter_map (fun (key, value) ->
+          if
+            String.equal key "POSTGRES_URL"
+            || String.equal key "SOL_API_KEY"
+            || List.exists
+                 (fun (workload : Sol_cli_workspace_model.workload) ->
+                    match workload.config with
+                    | Ok config -> List.mem key config.secret_keys
+                    | Error _ -> false)
+                 facts.workloads
+          then Some value
+          else None))
+      |> List.filter (fun value -> not (String.equal value ""))
+      |> List.sort_uniq String.compare
+    in
+    Ok { builds = ocaml_build @ unit_builds; launches = recipes; redact }
 ;;
 
 let shell_line ?(prefix = "") (command : command) =

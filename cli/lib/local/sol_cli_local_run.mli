@@ -15,10 +15,12 @@ type recipe =
 type plan =
   { builds : command list
   ; launches : recipe list
+  ; redact : string list
   }
 
 val plan
-  :  root:string
+  :  ?secret_values:(string * string) list
+  -> root:string
   -> facts:Sol_cli_workspace_model.t
   -> Sol_cli_manifest.service list
   -> (plan, (string * string) list) result

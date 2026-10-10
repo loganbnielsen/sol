@@ -114,6 +114,7 @@ test/                     ← schema backward-compatibility CI gate
   test_schemas.ml
   dune
 .dockerignore             ← excludes _build/ and .git/ from Docker build context
+.env.local                ← optional ignored credentials read by `sol local run`
 {{basename}}.opam              ← declares the Sol framework dependency (DEC-025)
 ```
 
