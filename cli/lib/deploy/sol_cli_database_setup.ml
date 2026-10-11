@@ -48,32 +48,45 @@ let ddl_role = "sol_migrator"
 let dml_role = "sol_app"
 
 (** Idempotent by construction: re-running against a target whose roles exist is a no-op
-    in value — the passwords come from the existing Secret (the renderer reads it), so
-    the [ALTER] re-applies the same value rather than churning it.
+    in value — the passwords come from the existing Secret, so the [ALTER] re-applies the
+    same value rather than churning it.
 
-    **The grants belong here, not in the migrations.** A role without them cannot do
-    anything. The migration runs as [sol_migrator] and creates the schema's objects, so
-    [ALTER DEFAULT PRIVILEGES] for that role is what makes everything it later creates
-    reachable by [sol_app], without every migration carrying grants of its own. On
+    **Where the passwords come from — and why this is a file, not [-c].** psql does *not*
+    interpolate [:'variable'] inside a dollar-quoted block: the server receives the
+    literal text and reports a syntax error. Verified against PostgreSQL 16. So the
+    values are read from the environment with [\getenv] — not from argv (which is visible
+    in the process list) and not from the script text (which would put them in the
+    manifest) — and the block uses [current_setting] to reach them. That requires the
+    script on stdin or [-f]; [-c] cannot carry this. The Job's [env:] feeds
+    [SOL_DDL_PASSWORD] and [SOL_DML_PASSWORD] from the transient Secret, exactly as it
+    feeds the master connection string.
+
+    [set_config] returns the value it set, so the selects project [IS NOT NULL]: without
+    it psql prints the password to stdout and the Job's logs capture it. Verified the
+    same way.
+
+    **The grants belong here, not in the migrations.** The migration runs as
+    [sol_migrator] and creates the schema's objects, so [ALTER DEFAULT PRIVILEGES] for
+    that role is what makes everything it later creates reachable by [sol_app]. On
     PostgreSQL 15 and later [public] grants no [CREATE] to [PUBLIC], so [sol_migrator]
-    needs it explicitly or the migration cannot create anything.
-
-    Passwords arrive as [psql] variables ([:'ddl_password']) rather than being embedded,
-    so this text never carries a secret and the manifest stays free of credential
-    material. *)
+    needs it explicitly or the migration cannot create anything. *)
 let role_sql =
   Printf.sprintf
-    {sql|DO $$
+    {sql|\getenv ddl_password SOL_DDL_PASSWORD
+\getenv dml_password SOL_DML_PASSWORD
+SELECT set_config('sol.ddl_password', :'ddl_password', false) IS NOT NULL;
+SELECT set_config('sol.dml_password', :'dml_password', false) IS NOT NULL;
+DO $$
 BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN
-    CREATE ROLE %s LOGIN PASSWORD :'ddl_password';
+    EXECUTE format('CREATE ROLE %s LOGIN PASSWORD %%L', current_setting('sol.ddl_password'));
   ELSE
-    ALTER ROLE %s LOGIN PASSWORD :'ddl_password';
+    EXECUTE format('ALTER ROLE %s LOGIN PASSWORD %%L', current_setting('sol.ddl_password'));
   END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '%s') THEN
-    CREATE ROLE %s LOGIN PASSWORD :'dml_password';
+    EXECUTE format('CREATE ROLE %s LOGIN PASSWORD %%L', current_setting('sol.dml_password'));
   ELSE
-    ALTER ROLE %s LOGIN PASSWORD :'dml_password';
+    EXECUTE format('ALTER ROLE %s LOGIN PASSWORD %%L', current_setting('sol.dml_password'));
   END IF;
 END
 $$;
